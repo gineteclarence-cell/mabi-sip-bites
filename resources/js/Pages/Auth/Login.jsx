@@ -1,100 +1,110 @@
-import Checkbox from '@/Components/Checkbox';
-import InputError from '@/Components/InputError';
-import InputLabel from '@/Components/InputLabel';
-import PrimaryButton from '@/Components/PrimaryButton';
-import TextInput from '@/Components/TextInput';
-import GuestLayout from '@/Layouts/GuestLayout';
-import { Head, Link, useForm } from '@inertiajs/react';
+import { useEffect } from 'react';
+import { Head, useForm, usePage } from '@inertiajs/react';
+import { Mail, Lock, ArrowRight } from 'lucide-react';
+import AuthSplitLayout from '@/Components/Layout/AuthSplitLayout';
+import Input from '@/Components/UI/Input';
+import Button from '@/Components/UI/Button';
+import { ToastProvider, useToast } from '@/Components/UI/ToastProvider';
 
-export default function Login({ status, canResetPassword }) {
-    const { data, setData, post, processing, errors, reset } = useForm({
-        email: '',
-        password: '',
-        remember: false,
+function LoginForm() {
+  const { flash } = usePage().props;
+  const { showToast } = useToast();
+  const { data, setData, post, processing, errors } = useForm({
+    email: '',
+    password: '',
+    remember: false,
+  });
+
+  useEffect(() => {
+    if (flash?.success) showToast({ type: 'success', title: flash.success });
+    if (flash?.error) showToast({ type: 'error', title: flash.error });
+  }, [flash]);
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    post(route('login'), {
+      onSuccess: () => showToast({ type: 'success', title: 'Logged in successfully' }),
     });
+  }
 
-    const submit = (e) => {
-        e.preventDefault();
+  return (
+    <>
+      <Head title="Log in" />
 
-        post(route('login'), {
-            onFinish: () => reset('password'),
-        });
-    };
+      <AuthSplitLayout
+        formTitle="Welcome back"
+        formSubtitle="Sign in to access your Mabi Sip & Bites workspace."
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Input
+            label="Email address"
+            inputModeType="email"
+            leftIcon={<Mail className="size-4" />}
+            value={data.email}
+            onChange={(v) => setData('email', v)}
+            error={errors.email}
+            placeholder="you@mabisipbites.test"
+            required
+            autoFocus
+          />
 
-    return (
-        <GuestLayout>
-            <Head title="Log in" />
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label htmlFor="password" className="text-sm font-medium text-text-primary">
+                Password
+              </label>
+              <a href="#" className="text-sm font-medium text-brand-ink hover:underline">
+                Forgot password?
+              </a>
+            </div>
+            <Input
+              id="password"
+              inputModeType="password"
+              leftIcon={<Lock className="size-4" />}
+              value={data.password}
+              onChange={(v) => setData('password', v)}
+              error={errors.password}
+              placeholder="Enter your password"
+              required
+            />
+          </div>
 
-            {status && (
-                <div className="mb-4 text-sm font-medium text-green-600">
-                    {status}
-                </div>
-            )}
+          <label className="flex items-center gap-2 text-sm text-text-secondary">
+            <input
+              type="checkbox"
+              checked={data.remember}
+              onChange={(e) => setData('remember', e.target.checked)}
+              className="size-4 rounded border-border text-brand focus:ring-brand"
+            />
+            Keep me signed in
+          </label>
 
-            <form onSubmit={submit}>
-                <div>
-                    <InputLabel htmlFor="email" value="Email" />
+          <Button
+            type="submit"
+            variant="primary"
+            className="w-full"
+            loading={processing}
+            rightIcon={<ArrowRight className="size-4" />}
+          >
+            Sign in
+          </Button>
+        </form>
 
-                    <TextInput
-                        id="email"
-                        type="email"
-                        name="email"
-                        value={data.email}
-                        className="mt-1 block w-full"
-                        autoComplete="username"
-                        isFocused={true}
-                        onChange={(e) => setData('email', e.target.value)}
-                    />
+        <p className="mt-6 text-center text-sm text-text-secondary">
+          Don&apos;t have an account?{' '}
+          <a href={route('register')} className="font-medium text-brand-ink hover:underline">
+            Sign up
+          </a>
+        </p>
+      </AuthSplitLayout>
+    </>
+  );
+}
 
-                    <InputError message={errors.email} className="mt-2" />
-                </div>
-
-                <div className="mt-4">
-                    <InputLabel htmlFor="password" value="Password" />
-
-                    <TextInput
-                        id="password"
-                        type="password"
-                        name="password"
-                        value={data.password}
-                        className="mt-1 block w-full"
-                        autoComplete="current-password"
-                        onChange={(e) => setData('password', e.target.value)}
-                    />
-
-                    <InputError message={errors.password} className="mt-2" />
-                </div>
-
-                <div className="mt-4 block">
-                    <label className="flex items-center">
-                        <Checkbox
-                            name="remember"
-                            checked={data.remember}
-                            onChange={(e) =>
-                                setData('remember', e.target.checked)
-                            }
-                        />
-                        <span className="ms-2 text-sm text-gray-600">
-                            Remember me
-                        </span>
-                    </label>
-                </div>
-
-                <div className="mt-4 flex items-center justify-end">
-                    {canResetPassword && (
-                        <Link
-                            href={route('password.request')}
-                            className="rounded-md text-sm text-gray-600 underline hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                        >
-                            Forgot your password?
-                        </Link>
-                    )}
-
-                    <PrimaryButton className="ms-4" disabled={processing}>
-                        Log in
-                    </PrimaryButton>
-                </div>
-            </form>
-        </GuestLayout>
-    );
+export default function Login() {
+  return (
+    <ToastProvider>
+      <LoginForm />
+    </ToastProvider>
+  );
 }
