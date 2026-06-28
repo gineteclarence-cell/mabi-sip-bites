@@ -3,10 +3,15 @@ import { User, Mail, Phone, Lock, ArrowRight } from 'lucide-react';
 import AuthSplitLayout from '@/Components/Layout/AuthSplitLayout';
 import Input from '@/Components/UI/Input';
 import Button from '@/Components/UI/Button';
-import { ToastProvider, useToast } from '@/Components/UI/ToastProvider';
+import { useToast } from '@/Components/UI/ToastProvider';
 import { isStrongPassword } from '@/lib/validators';
 
-function RegisterForm() {
+/**
+ * Register no longer wraps itself in <ToastProvider> — see Login.jsx's
+ * docblock for the full explanation. ToastProvider now lives once, at
+ * the top of resources/js/app.jsx.
+ */
+export default function Register() {
   const { showToast } = useToast();
   const { data, setData, post, processing, errors } = useForm({
     name: '',
@@ -21,7 +26,8 @@ function RegisterForm() {
   function handleSubmit(e) {
     e.preventDefault();
     post(route('register'), {
-      onSuccess: () => showToast({ type: 'success', title: 'Account created successfully' }),
+      onSuccess: () => showToast({ type: 'success', title: 'Account created successfully.' }),
+      onError: () => showToast({ type: 'error', title: 'Please fix the errors below.' }),
     });
   }
 
@@ -113,13 +119,5 @@ function RegisterForm() {
         </p>
       </AuthSplitLayout>
     </>
-  );
-}
-
-export default function Register() {
-  return (
-    <ToastProvider>
-      <RegisterForm />
-    </ToastProvider>
   );
 }

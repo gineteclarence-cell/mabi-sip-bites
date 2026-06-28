@@ -4,9 +4,16 @@ import { Mail, Lock, ArrowRight } from 'lucide-react';
 import AuthSplitLayout from '@/Components/Layout/AuthSplitLayout';
 import Input from '@/Components/UI/Input';
 import Button from '@/Components/UI/Button';
-import { ToastProvider, useToast } from '@/Components/UI/ToastProvider';
+import { useToast } from '@/Components/UI/ToastProvider';
 
-function LoginForm() {
+/**
+ * Login no longer wraps itself in <ToastProvider> — that now lives once,
+ * at the top of resources/js/app.jsx, above every Inertia page swap.
+ * useToast() here resolves to that single top-level instance, which is
+ * what lets the "Logged in successfully" toast actually survive the
+ * redirect to /dashboard that follows it.
+ */
+export default function Login() {
   const { flash } = usePage().props;
   const { showToast } = useToast();
   const { data, setData, post, processing, errors } = useForm({
@@ -23,7 +30,8 @@ function LoginForm() {
   function handleSubmit(e) {
     e.preventDefault();
     post(route('login'), {
-      onSuccess: () => showToast({ type: 'success', title: 'Logged in successfully' }),
+      onSuccess: () => showToast({ type: 'success', title: 'Logged in successfully.' }),
+      onError: () => showToast({ type: 'error', title: 'Unable to log in. Check your details.' }),
     });
   }
 
@@ -98,13 +106,5 @@ function LoginForm() {
         </p>
       </AuthSplitLayout>
     </>
-  );
-}
-
-export default function Login() {
-  return (
-    <ToastProvider>
-      <LoginForm />
-    </ToastProvider>
   );
 }
