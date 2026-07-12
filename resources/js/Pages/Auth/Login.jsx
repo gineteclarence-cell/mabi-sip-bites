@@ -1,110 +1,144 @@
-import { useEffect } from 'react';
-import { Head, useForm, usePage } from '@inertiajs/react';
-import { Mail, Lock, ArrowRight } from 'lucide-react';
-import AuthSplitLayout from '@/Components/Layout/AuthSplitLayout';
-import Input from '@/Components/UI/Input';
-import Button from '@/Components/UI/Button';
-import { useToast } from '@/Components/UI/ToastProvider';
+import { useEffect } from "react";
+import { Head, useForm, usePage } from "@inertiajs/react";
+import { Mail, Lock, ArrowRight } from "lucide-react";
+import AuthSplitLayout from "@/Components/Layout/AuthSplitLayout";
+import Input from "@/Components/UI/Input";
+import Button from "@/Components/UI/Button";
+import { useToast } from "@/Components/UI/ToastProvider";
 
-/**
- * Login no longer wraps itself in <ToastProvider> — that now lives once,
- * at the top of resources/js/app.jsx, above every Inertia page swap.
- * useToast() here resolves to that single top-level instance, which is
- * what lets the "Logged in successfully" toast actually survive the
- * redirect to /dashboard that follows it.
- */
 export default function Login() {
-  const { flash } = usePage().props;
-  const { showToast } = useToast();
-  const { data, setData, post, processing, errors } = useForm({
-    email: '',
-    password: '',
-    remember: false,
-  });
+    const { flash } = usePage().props;
+    const { showToast } = useToast();
 
-  useEffect(() => {
-    if (flash?.success) showToast({ type: 'success', title: flash.success });
-    if (flash?.error) showToast({ type: 'error', title: flash.error });
-  }, [flash]);
-
-  function handleSubmit(e) {
-    e.preventDefault();
-    post(route('login'), {
-      onSuccess: () => showToast({ type: 'success', title: 'Logged in successfully.' }),
-      onError: () => showToast({ type: 'error', title: 'Unable to log in. Check your details.' }),
+    const { data, setData, post, processing, errors } = useForm({
+        email: "",
+        password: "",
+        remember: false,
     });
-  }
 
-  return (
-    <>
-      <Head title="Log in" />
+    useEffect(() => {
+        if (flash?.success) {
+            showToast({
+                type: "success",
+                title: flash.success,
+            });
+        }
 
-      <AuthSplitLayout
-        formTitle="Welcome back"
-        formSubtitle="Sign in to access your Mabi Sip & Bites workspace."
-      >
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            label="Email address"
-            inputModeType="email"
-            leftIcon={<Mail className="size-4" />}
-            value={data.email}
-            onChange={(v) => setData('email', v)}
-            error={errors.email}
-            placeholder="you@mabisipbites.test"
-            required
-            autoFocus
-          />
+        if (flash?.error) {
+            showToast({
+                type: "error",
+                title: flash.error,
+            });
+        }
+    }, [flash, showToast]);
 
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <label htmlFor="password" className="text-sm font-medium text-text-primary">
-                Password
-              </label>
-              <a href="#" className="text-sm font-medium text-brand-ink hover:underline">
-                Forgot password?
-              </a>
-            </div>
-            <Input
-              id="password"
-              inputModeType="password"
-              leftIcon={<Lock className="size-4" />}
-              value={data.password}
-              onChange={(v) => setData('password', v)}
-              error={errors.password}
-              placeholder="Enter your password"
-              required
-            />
-          </div>
+    function handleSubmit(e) {
+        e.preventDefault();
 
-          <label className="flex items-center gap-2 text-sm text-text-secondary">
-            <input
-              type="checkbox"
-              checked={data.remember}
-              onChange={(e) => setData('remember', e.target.checked)}
-              className="size-4 rounded border-border text-brand focus:ring-brand"
-            />
-            Keep me signed in
-          </label>
+        post(route("login"), {
+            onSuccess: () =>
+                showToast({
+                    type: "success",
+                    title: "Logged in successfully.",
+                }),
+            onError: () =>
+                showToast({
+                    type: "error",
+                    title: "Unable to log in. Check your details.",
+                }),
+        });
+    }
 
-          <Button
-            type="submit"
-            variant="primary"
-            className="w-full"
-            loading={processing}
-            rightIcon={<ArrowRight className="size-4" />}
-          >
-            Sign in
-          </Button>
-        </form>
+    return (
+        <>
+            <Head title="Log in" />
 
-        <p className="mt-6 text-center text-sm text-text-secondary">
-          Don&apos;t have an account?{' '}
-          <a href={route('register')} className="font-medium text-brand-ink hover:underline">
-            Sign up
-          </a>
-        </p>
-      </AuthSplitLayout>
-    </>
-  );
+            <AuthSplitLayout
+                formTitle="Welcome back"
+                formSubtitle="Sign in to continue to your workspace."
+            >
+                <div className="w-full">
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                        <Input
+                            label="Email address"
+                            inputModeType="email"
+                            leftIcon={<Mail className="size-4" />}
+                            value={data.email}
+                            onChange={(value) => setData("email", value)}
+                            error={errors.email}
+                            placeholder="you@mabisipbites.test"
+                            required
+                            autoFocus
+                        />
+
+                        <div>
+                            <div className="mb-1.5 flex items-center justify-between">
+                                <label
+                                    htmlFor="password"
+                                    className="text-sm font-medium text-text-primary"
+                                >
+                                    Password
+                                </label>
+
+                                <a
+                                    href="#"
+                                    className="text-xs font-medium text-text-secondary transition-colors hover:text-brand-ink"
+                                >
+                                    Forgot password?
+                                </a>
+                            </div>
+
+                            <Input
+                                id="password"
+                                inputModeType="password"
+                                leftIcon={<Lock className="size-4" />}
+                                value={data.password}
+                                onChange={(value) => setData("password", value)}
+                                error={errors.password}
+                                placeholder="Enter your password"
+                                required
+                            />
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                            <label className="flex cursor-pointer items-center gap-2.5">
+                                <input
+                                    type="checkbox"
+                                    checked={data.remember}
+                                    onChange={(e) =>
+                                        setData("remember", e.target.checked)
+                                    }
+                                    className="size-4 rounded border-border bg-transparent text-brand focus:ring-2 focus:ring-brand/30"
+                                />
+
+                                <span className="text-sm text-text-secondary">
+                                    Keep me signed in
+                                </span>
+                            </label>
+                        </div>
+
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            className="mt-1 w-full"
+                            loading={processing}
+                            rightIcon={
+                                !processing ? (
+                                    <ArrowRight className="size-4" />
+                                ) : null
+                            }
+                        >
+                            Sign in
+                        </Button>
+                    </form>
+
+                    <div className="mt-7 border-t border-border pt-5">
+                        <p className="text-center text-xs leading-5 text-text-secondary">
+                            Mabi Sip &amp; Bites Store Management
+                        </p>
+                    </div>
+                </div>
+            </AuthSplitLayout>
+        </>
+    );
 }

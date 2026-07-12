@@ -23,8 +23,13 @@ class StaffTaskController extends Controller
             ->get()
             ->map(fn (StaffTask $task) => $this->presentTask($task));
 
+        $staffOptions = $this->scopeToUserBranch(
+            \App\Models\User::query()->where('status', 'active')
+        )->get(['id', 'name', 'branch_id']);
+
         return Inertia::render('Tasks/Index', [
             'tasks' => $tasks,
+            'staffOptions' => $staffOptions,
         ]);
     }
 

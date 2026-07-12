@@ -23,6 +23,7 @@ class StoreProductRequest extends FormRequest
             'low_stock_threshold' => ['required', 'integer', 'min:0'],
             'cost_price' => ['nullable', 'numeric', 'min:0'],
             'selling_price' => ['required', 'numeric', 'min:0'],
+            'image_url' => ['nullable', 'string', 'max:2048'],
         ];
     }
 

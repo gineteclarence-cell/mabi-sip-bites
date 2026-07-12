@@ -23,8 +23,13 @@ class AttendanceController extends Controller
             ->get()
             ->map(fn (AttendanceLog $log) => $this->presentLog($log));
 
+        $staffOptions = $this->scopeToUserBranch(
+            \App\Models\User::query()->where('status', 'active')
+        )->get(['id', 'name', 'branch_id']);
+
         return Inertia::render('Attendance/Index', [
             'attendanceLogs' => $logs,
+            'staffOptions' => $staffOptions,
         ]);
     }
 

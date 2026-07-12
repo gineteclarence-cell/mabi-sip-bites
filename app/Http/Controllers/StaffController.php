@@ -7,9 +7,11 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Traits\BranchScoped;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class StaffController extends Controller
 {
@@ -23,11 +25,6 @@ class StaffController extends Controller
             ->orderBy('name')
             ->get();
 
-        // Per 07_BACKEND_CONTROLLERS_AND_ROUTES.md "Staff Performance
-        // Metrics": transaction count per staff, this month. Computed as
-        // one grouped query rather than looping a count() per staff
-        // member, to avoid N+1 queries on a page that can list every
-        // staff member in the branch.
         $transactionCounts = Sale::query()
             ->whereIn('staff_id', $staff->pluck('id'))
             ->where('status', 'completed')
@@ -47,6 +44,14 @@ class StaffController extends Controller
     {
         $data = $request->validated();
 
+        // Privilege-escalation guard: only an Owner may create another
+        // Owner account or a Manager account. Without this, a Manager
+        // (who now has route access to /staff per Phase 10) could submit
+        // role => 'owner' or role => 'manager' in the form and grant
+        // themselves or someone else elevated access. Manager is only
+        // permitted to create 'staff' role accounts.
+        $this->guardRoleAssignment($data['role']);
+
         if ($data['role'] !== 'owner') {
             $this->authorizeBranch((int) $data['branch_id']);
         } else {
@@ -62,9 +67,19 @@ class StaffController extends Controller
 
     public function update(StoreStaffRequest $request, User $staff): RedirectResponse
     {
+        // A Manager may only ever touch 'staff'-role records, and only
+        // within their own branch. authorizeRecordBranch() alone isn't
+        // enough here — Owner's branch_id is null, which happens to fail
+        // that check too, but relying on that coincidence is fragile and
+        // not self-documenting. This makes the rule explicit: Manager
+        // cannot edit Owner or other Manager accounts, full stop,
+        // regardless of branch_id.
+        $this->guardStaffRecordAccess($staff);
         $this->authorizeRecordBranch($staff);
 
         $data = $request->validated();
+
+        $this->guardRoleAssignment($data['role']);
 
         if ($data['role'] !== 'owner') {
             $this->authorizeBranch((int) $data['branch_id']);
@@ -81,6 +96,40 @@ class StaffController extends Controller
         $staff->update($data);
 
         return redirect()->back()->with('success', 'Staff member updated successfully.');
+    }
+
+    /**
+     * Manager may only assign the 'staff' role. Only Owner may create or
+     * promote someone to 'owner' or 'manager'.
+     */
+    private function guardRoleAssignment(string $targetRole): void
+    {
+        $actingUser = Auth::user();
+
+        if ($actingUser->isOwner()) {
+            return;
+        }
+
+        if ($targetRole !== 'staff') {
+            throw new HttpException(403, 'Only the owner can assign owner or manager roles.');
+        }
+    }
+
+    /**
+     * Manager may only act on records that are themselves 'staff' role.
+     * Owner bypasses this entirely.
+     */
+    private function guardStaffRecordAccess(User $targetUser): void
+    {
+        $actingUser = Auth::user();
+
+        if ($actingUser->isOwner()) {
+            return;
+        }
+
+        if ($targetUser->role !== 'staff') {
+            throw new HttpException(403, 'You do not have access to manage this account.');
+        }
     }
 
     private function presentStaff(User $user, int $transactionsThisMonth = 0): array

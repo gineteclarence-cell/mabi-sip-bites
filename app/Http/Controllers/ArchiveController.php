@@ -154,12 +154,20 @@ class ArchiveController extends Controller
             return;
         }
 
-        if ($module === 'staff' && $record->role === 'owner') {
-            // Nothing to scope — owner accounts have no branch.
-            if (! Auth::user()->isOwner()) {
-                abort(403, 'You do not have access to manage this record.');
+        if ($module === 'staff') {
+            // Manager may only archive/restore/delete 'staff'-role
+            // accounts, never 'owner' or 'manager' accounts (including
+            // their own peers in the same branch). Owner-role records
+            // also have no branch_id to scope against, so this check
+            // has to come before the generic authorizeRecordBranch()
+            // call below regardless of role.
+            if (! Auth::user()->isOwner() && $record->role !== 'staff') {
+                abort(403, 'You do not have access to manage this account.');
             }
-            return;
+
+            if (Auth::user()->isOwner()) {
+                return;
+            }
         }
 
         $this->authorizeRecordBranch($record);

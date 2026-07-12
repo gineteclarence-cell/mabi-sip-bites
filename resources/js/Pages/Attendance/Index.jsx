@@ -1,19 +1,16 @@
 import { useState } from 'react';
-import { Head } from '@inertiajs/react';
+import { Head, router, usePage } from '@inertiajs/react';
 import { Plus, CalendarCheck } from 'lucide-react';
 import AppLayout from '@/Components/Layout/AppLayout';
 import DataTable from '@/Components/UI/DataTable';
 import ActionDropdown from '@/Components/UI/ActionDropdown';
 import Modal from '@/Components/UI/Modal';
-import ConfirmModal from '@/Components/UI/ConfirmModal';
 import Button from '@/Components/UI/Button';
 import Input from '@/Components/UI/Input';
 import Select from '@/Components/UI/Select';
 import Textarea from '@/Components/UI/Textarea';
 import Badge from '@/Components/UI/Badge';
 import RecordDetailModal from '@/Components/Records/RecordDetailModal';
-import { useToast } from '@/Components/UI/ToastProvider';
-import { sampleAttendance, sampleBranches, sampleStaff } from '@/lib/sampleRecords';
 
 const statusVariant = { present: 'success', late: 'warning', absent: 'danger', incomplete: 'neutral' };
 
@@ -23,57 +20,38 @@ function toTimeInputValue(isoString) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function combineDateTime(dateStr, timeStr) {
-  if (!dateStr || !timeStr) return null;
-  return new Date(`${dateStr}T${timeStr}:00`).toISOString();
-}
-
-function emptyForm() {
+function emptyForm(defaultBranchId) {
   return {
-    user_id: '', branch_id: sampleBranches[0]?.id ?? '',
+    user_id: '', branch_id: defaultBranchId ?? '',
     work_date: new Date().toISOString().slice(0, 10),
     time_in: '', time_out: '', status: 'present', remarks: '',
   };
 }
 
-function AttendanceForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
+function AttendanceForm({ initial, onSubmit, onCancel, submitLabel, loading, branches, staffOptions }) {
   const [form, setForm] = useState(
     initial
-      ? {
-          ...initial,
-          time_in: toTimeInputValue(initial.time_in),
-          time_out: toTimeInputValue(initial.time_out),
-        }
-      : emptyForm()
+      ? { ...initial, time_in: toTimeInputValue(initial.time_in), time_out: toTimeInputValue(initial.time_out) }
+      : emptyForm(branches[0]?.id)
   );
   const [errors, setErrors] = useState({});
 
-  const branchStaff = sampleStaff.filter((s) => String(s.branch_id) === String(form.branch_id));
-
-  function validate() {
-    const next = {};
-    if (!form.user_id) next.user_id = 'Staff is required.';
-    if (!form.branch_id) next.branch_id = 'Branch is required.';
-    if (!form.work_date) next.work_date = 'Date is required.';
-    setErrors(next);
-    return Object.keys(next).length === 0;
-  }
+  const branchStaff = staffOptions.filter((s) => String(s.branch_id) === String(form.branch_id));
 
   function handleSubmit(e) {
     e.preventDefault();
-    if (!validate()) return;
-    const staff = sampleStaff.find((s) => String(s.id) === String(form.user_id));
-    const branch = sampleBranches.find((b) => String(b.id) === String(form.branch_id));
-
-    onSubmit({
-      ...form,
-      user_id: Number(form.user_id),
-      staff_name: staff?.name || '',
-      branch_id: Number(form.branch_id),
-      branch_name: branch?.name?.replace('Mabi Sip and Bites ', '') || '',
-      time_in: combineDateTime(form.work_date, form.time_in),
-      time_out: combineDateTime(form.work_date, form.time_out),
-    });
+    onSubmit(
+      {
+        user_id: form.user_id,
+        branch_id: form.branch_id,
+        work_date: form.work_date,
+        time_in: form.time_in ? `${form.work_date} ${form.time_in}:00` : null,
+        time_out: form.time_out ? `${form.work_date} ${form.time_out}:00` : null,
+        status: form.status,
+        remarks: form.remarks,
+      },
+      { onError: setErrors }
+    );
   }
 
   return (
@@ -86,8 +64,8 @@ function AttendanceForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
         required
       >
         <option value="">Select branch</option>
-        {sampleBranches.map((b) => (
-          <option key={b.id} value={b.id}>{b.name}</option>
+        {branches.map((b) => (
+          <option key={b.id} value={b.id}>{b.name.replace('Mabi Sip and Bites ', '')}</option>
         ))}
       </Select>
 
@@ -111,6 +89,8 @@ function AttendanceForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
         onChange={(v) => setForm((f) => ({ ...f, work_date: v }))}
         error={errors.work_date}
         required
+        disabled={!!initial}
+        helpText={initial ? 'Date cannot be changed once logged' : undefined}
       />
 
       <div className="grid grid-cols-2 gap-4">
@@ -156,45 +136,28 @@ function AttendanceForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
   );
 }
 
-/**
- * Attendance has no archive/restore/delete flow — per 02_DATABASE_DESIGN.md,
- * attendance_logs has no `status: archived` or `archived_at` column (unlike
- * every other entity). It only has the present/late/absent/incomplete
- * status enum, which is operational data, not a soft-delete flag. So this
- * page only implements Create, View, Edit — matching the DB design exactly
- * rather than inventing an archive concept the schema doesn't support.
- */
-export default function AttendanceIndex() {
-  return (
-    <AppLayout title="Attendance" subtitle="Staff time-in and time-out records">
-      <Head title="Attendance" />
-      <AttendancePageContent />
-    </AppLayout>
-  );
-}
-
-function AttendancePageContent() {
-  const { showToast } = useToast();
-  const [allRecords, setAllRecords] = useState(sampleAttendance);
+function AttendancePageContent({ attendanceLogs, branches, staffOptions }) {
   const [creating, setCreating] = useState(false);
   const [viewing, setViewing] = useState(null);
   const [editing, setEditing] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function createRecord(data) {
+  function createRecord(data, { onError } = {}) {
     setIsSubmitting(true);
-    setAllRecords((current) => [{ id: Date.now(), ...data }, ...current]);
-    setIsSubmitting(false);
-    setCreating(false);
-    showToast({ type: 'success', title: 'Attendance log created successfully.' });
+    router.post(route('attendance.store'), data, {
+      onSuccess: () => setCreating(false),
+      onError,
+      onFinish: () => setIsSubmitting(false),
+    });
   }
 
-  function updateRecord(id, data) {
+  function updateRecord(id, data, { onError } = {}) {
     setIsSubmitting(true);
-    setAllRecords((current) => current.map((r) => (r.id === id ? { ...r, ...data } : r)));
-    setIsSubmitting(false);
-    setEditing(null);
-    showToast({ type: 'success', title: 'Attendance log updated successfully.' });
+    router.patch(route('attendance.update', id), data, {
+      onSuccess: () => setEditing(null),
+      onError,
+      onFinish: () => setIsSubmitting(false),
+    });
   }
 
   const columns = [
@@ -226,7 +189,7 @@ function AttendancePageContent() {
 
       <DataTable
         columns={columns}
-        data={allRecords}
+        data={attendanceLogs}
         actions={(row) => (
           <ActionDropdown
             items={[
@@ -243,22 +206,36 @@ function AttendancePageContent() {
       />
 
       <Modal isOpen={creating} onClose={() => setCreating(false)} title="Log attendance" maxWidth="md">
-        <AttendanceForm onSubmit={createRecord} onCancel={() => setCreating(false)} submitLabel="Save log" loading={isSubmitting} />
+        <AttendanceForm onSubmit={createRecord} onCancel={() => setCreating(false)} submitLabel="Save log" loading={isSubmitting} branches={branches} staffOptions={staffOptions} />
       </Modal>
 
       <Modal isOpen={!!editing} onClose={() => setEditing(null)} title="Edit attendance" maxWidth="md">
         {editing && (
           <AttendanceForm
             initial={editing}
-            onSubmit={(data) => updateRecord(editing.id, data)}
+            onSubmit={(data, opts) => updateRecord(editing.id, data, opts)}
             onCancel={() => setEditing(null)}
             submitLabel="Save changes"
             loading={isSubmitting}
+            branches={branches}
+            staffOptions={staffOptions}
           />
         )}
       </Modal>
 
       <RecordDetailModal isOpen={!!viewing} onClose={() => setViewing(null)} title="Attendance details" record={viewing} fields={viewFields} />
     </>
+  );
+}
+
+export default function AttendanceIndex({ attendanceLogs, staffOptions = [] }) {
+  const { props } = usePage();
+  const branches = props.branches || [];
+
+  return (
+    <AppLayout title="Attendance" subtitle="Staff time-in and time-out records">
+      <Head title="Attendance" />
+      <AttendancePageContent attendanceLogs={attendanceLogs} branches={branches} staffOptions={staffOptions} />
+    </AppLayout>
   );
 }

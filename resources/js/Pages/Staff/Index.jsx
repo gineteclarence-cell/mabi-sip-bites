@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Head } from '@inertiajs/react';
+import { Head, usePage } from '@inertiajs/react';
 import { Plus, Users } from 'lucide-react';
 import AppLayout from '@/Components/Layout/AppLayout';
 import DataTable from '@/Components/UI/DataTable';
@@ -13,37 +13,35 @@ import Badge from '@/Components/UI/Badge';
 import RecordDetailModal from '@/Components/Records/RecordDetailModal';
 import { useArchivableRecords } from '@/lib/useArchivableRecords';
 import { buildActiveActions } from '@/lib/buildActionItems';
-import { sampleStaff, sampleBranches } from '@/lib/sampleRecords';
-
-const emptyForm = { name: '', email: '', contact_number: '', role: 'staff', branch_id: sampleBranches[0]?.id ?? '' };
 
 const roleVariant = { owner: 'brand', manager: 'warning', staff: 'neutral' };
 
-function StaffForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
-  const [form, setForm] = useState(initial || emptyForm);
-  const [errors, setErrors] = useState({});
+function emptyForm(defaultBranchId) {
+  return { name: '', email: '', contact_number: '', role: 'staff', branch_id: defaultBranchId ?? '', password: '', password_confirmation: '' };
+}
 
-  function validate() {
-    const next = {};
-    if (!form.name.trim()) next.name = 'Name is required.';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) next.email = 'Enter a valid email.';
-    if (form.contact_number && !/^09\d{9}$/.test(form.contact_number)) {
-      next.contact_number = 'Must be 11 digits starting with 09.';
-    }
-    if (form.role !== 'owner' && !form.branch_id) next.branch_id = 'Branch is required for this role.';
-    setErrors(next);
-    return Object.keys(next).length === 0;
-  }
+function StaffForm({ initial, onSubmit, onCancel, submitLabel, loading, isOwner, branches }) {
+  const [form, setForm] = useState(
+    initial
+      ? { ...initial, password: '', password_confirmation: '' }
+      : emptyForm(branches[0]?.id)
+  );
+  const [errors, setErrors] = useState({});
 
   function handleSubmit(e) {
     e.preventDefault();
-    if (!validate()) return;
-    const branch = sampleBranches.find((b) => String(b.id) === String(form.branch_id));
-    onSubmit({
-      ...form,
-      branch_id: form.role === 'owner' ? null : Number(form.branch_id),
-      branch_name: form.role === 'owner' ? '—' : (branch?.name?.replace('Mabi Sip and Bites ', '') || ''),
-    });
+    onSubmit(
+      {
+        name: form.name,
+        email: form.email,
+        contact_number: form.contact_number,
+        role: form.role,
+        branch_id: form.role === 'owner' ? null : form.branch_id,
+        password: form.password,
+        password_confirmation: form.password_confirmation,
+      },
+      { onError: setErrors }
+    );
   }
 
   return (
@@ -81,9 +79,11 @@ function StaffForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
           value={form.role}
           onChange={(v) => setForm((f) => ({ ...f, role: v }))}
           required
+          disabled={!isOwner}
+          helpText={!isOwner ? 'Only the owner can assign manager/owner roles.' : undefined}
         >
-          <option value="owner">Owner</option>
-          <option value="manager">Manager</option>
+          {isOwner && <option value="owner">Owner</option>}
+          {isOwner && <option value="manager">Manager</option>}
           <option value="staff">Staff</option>
         </Select>
         <Select
@@ -94,11 +94,30 @@ function StaffForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
           disabled={form.role === 'owner'}
         >
           <option value="">{form.role === 'owner' ? 'All branches' : 'Select branch'}</option>
-          {sampleBranches.map((b) => (
-            <option key={b.id} value={b.id}>{b.name}</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>{b.name.replace('Mabi Sip and Bites ', '')}</option>
           ))}
         </Select>
       </div>
+      <Input
+        label={initial ? 'New password' : 'Password'}
+        inputModeType="password"
+        value={form.password}
+        onChange={(v) => setForm((f) => ({ ...f, password: v }))}
+        error={errors.password}
+        placeholder={initial ? 'Leave blank to keep current password' : 'Create a password'}
+        helpText="Min 8 characters with a letter, number, and symbol"
+        required={!initial}
+      />
+      <Input
+        label="Confirm password"
+        inputModeType="password"
+        value={form.password_confirmation}
+        onChange={(v) => setForm((f) => ({ ...f, password_confirmation: v }))}
+        error={errors.password_confirmation}
+        placeholder="Re-enter password"
+        required={!initial && form.password !== ''}
+      />
       <div className="flex justify-end gap-3 pt-2">
         <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
         <Button type="submit" variant="primary" loading={loading}>{submitLabel}</Button>
@@ -107,7 +126,11 @@ function StaffForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
   );
 }
 
-function StaffPageContent() {
+function StaffPageContent({ staff, branches }) {
+  const { props } = usePage();
+  const currentRole = props.auth?.user?.role;
+  const isOwner = currentRole === 'owner';
+
   const {
     records, isSubmitting,
     creating, viewing, editing, archiving,
@@ -115,7 +138,18 @@ function StaffPageContent() {
     openView, closeView,
     openEdit, closeEdit, updateRecord,
     openArchive, closeArchive, confirmArchive,
-  } = useArchivableRecords(sampleStaff, { entityLabel: 'Staff member' });
+  } = useArchivableRecords({
+    records: staff,
+    storeRoute: 'staff.store',
+    updateRouteName: 'staff.update',
+    module: 'staff',
+  });
+
+  // Server already scopes which staff a Manager can see in
+  // StaffController::index(); this client-side filter is a second,
+  // redundant layer so the table never shows a row whose Edit/Archive
+  // would be rejected — defense in depth, not the actual boundary.
+  const visibleRecords = isOwner ? records : records.filter((r) => r.role === 'staff');
 
   const columns = [
     { key: 'name', header: 'Name' },
@@ -136,10 +170,6 @@ function StaffPageContent() {
     { key: 'role', label: 'Role', render: (r) => <Badge variant={roleVariant[r.role]}>{r.role}</Badge> },
     { key: 'branch_name', label: 'Branch' },
     { key: 'status', label: 'Status', render: (r) => <Badge variant={r.status === 'active' ? 'success' : 'neutral'}>{r.status}</Badge> },
-    // Per 07_BACKEND_CONTROLLERS_AND_ROUTES.md "Staff Performance Metrics":
-    // transaction count surfaced in the staff details modal. Only
-    // meaningful for staff who actually ring up sales — owner/manager
-    // rows show a dash instead of a misleading 0.
     {
       key: 'transactions_this_month',
       label: 'Transactions this month',
@@ -157,7 +187,7 @@ function StaffPageContent() {
 
       <DataTable
         columns={columns}
-        data={records}
+        data={visibleRecords}
         actions={(row) => (
           <ActionDropdown
             items={buildActiveActions({
@@ -175,17 +205,19 @@ function StaffPageContent() {
       />
 
       <Modal isOpen={creating} onClose={closeCreate} title="Add staff" maxWidth="md">
-        <StaffForm onSubmit={createRecord} onCancel={closeCreate} submitLabel="Create staff" loading={isSubmitting} />
+        <StaffForm onSubmit={createRecord} onCancel={closeCreate} submitLabel="Create staff" loading={isSubmitting} isOwner={isOwner} branches={branches} />
       </Modal>
 
       <Modal isOpen={!!editing} onClose={closeEdit} title="Edit staff" maxWidth="md">
         {editing && (
           <StaffForm
             initial={editing}
-            onSubmit={(data) => updateRecord(editing.id, data)}
+            onSubmit={(data, opts) => updateRecord(editing.id, data, opts)}
             onCancel={closeEdit}
             submitLabel="Save changes"
             loading={isSubmitting}
+            isOwner={isOwner}
+            branches={branches}
           />
         )}
       </Modal>
@@ -205,11 +237,14 @@ function StaffPageContent() {
   );
 }
 
-export default function StaffIndex() {
+export default function StaffIndex({ staff }) {
+  const { props } = usePage();
+  const branches = props.branches || [];
+
   return (
     <AppLayout title="Staff" subtitle="Manage team members across both branches">
       <Head title="Staff" />
-      <StaffPageContent />
+      <StaffPageContent staff={staff} branches={branches} />
     </AppLayout>
   );
 }

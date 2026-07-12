@@ -1,9 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
-use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
-use Inertia\Inertia;
 
 use App\Http\Controllers\ArchiveController;
 use App\Http\Controllers\AttendanceController;
@@ -15,14 +13,10 @@ use App\Http\Controllers\SaleController;
 use App\Http\Controllers\StaffController;
 use App\Http\Controllers\StaffTaskController;
 
-
 Route::get('/', function () {
-    return Inertia::render('Welcome', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-        'laravelVersion' => Application::VERSION,
-        'phpVersion' => PHP_VERSION,
-    ]);
+    return auth()->check()
+        ? redirect()->route('dashboard')
+        : redirect()->route('login');
 });
 
 Route::middleware('auth')->group(function () {
@@ -32,21 +26,51 @@ Route::middleware('auth')->group(function () {
 });
 
 Route::middleware(['auth', 'verified'])->group(function () {
+
+    // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-    Route::get('/reports', [ReportController::class, 'index'])->name('reports.index'); // <-- add this line
+    // Reports + PDF export
+    Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');
+    Route::get('/reports/export-pdf', [ReportController::class, 'exportPdf'])->name('reports.export-pdf');
 
-    Route::resource('branches', BranchController::class)->except(['show', 'destroy', 'create', 'edit']);
-    Route::resource('inventory', ProductController::class)->except(['show', 'destroy', 'create', 'edit']);
-    Route::resource('sales', SaleController::class)->except(['show', 'destroy', 'create', 'edit', 'update']);
-    Route::resource('staff', StaffController::class)->except(['show', 'destroy', 'create', 'edit']);
-    Route::resource('attendance', AttendanceController::class)->except(['show', 'destroy', 'create', 'edit']);
-    Route::resource('tasks', StaffTaskController::class)->except(['show', 'destroy', 'create', 'edit']);
+    // POS ordering screen (same controller as Sales, different Inertia view)
+    Route::get('/pos', [SaleController::class, 'pos'])->name('pos.index');
 
-    Route::patch('/archive/{module}/{id}', [ArchiveController::class, 'archive'])->name('archive.archive');
-    Route::patch('/restore/{module}/{id}', [ArchiveController::class, 'restore'])->name('archive.restore');
-    Route::delete('/archive/{module}/{id}', [ArchiveController::class, 'destroy'])->name('archive.destroy');
-    Route::get('/archived-records', [ArchiveController::class, 'index'])->name('archive.index');
+    // ── Owner-only ─────────────────────────────────────────────────────────
+    Route::middleware('role:owner')->group(function () {
+        Route::resource('branches', BranchController::class)
+            ->except(['show', 'destroy', 'create', 'edit']);
+    });
+
+    // ── Owner + Manager ────────────────────────────────────────────────────
+    Route::middleware('role:owner,manager')->group(function () {
+        Route::resource('staff', StaffController::class)
+            ->except(['show', 'destroy', 'create', 'edit']);
+    });
+
+    // ── All authenticated roles (branch-scoped inside each controller) ─────
+    Route::resource('inventory', ProductController::class)
+        ->except(['show', 'destroy', 'create', 'edit']);
+
+    Route::resource('sales', SaleController::class)
+        ->except(['show', 'destroy', 'create', 'edit', 'update']);
+
+    Route::resource('attendance', AttendanceController::class)
+        ->except(['show', 'destroy', 'create', 'edit']);
+
+    Route::resource('tasks', StaffTaskController::class)
+        ->except(['show', 'destroy', 'create', 'edit']);
+
+    // ── Archive / Restore / Delete (generic, module-parameterised) ─────────
+    Route::patch('/archive/{module}/{id}', [ArchiveController::class, 'archive'])
+        ->name('archive.archive');
+    Route::patch('/restore/{module}/{id}', [ArchiveController::class, 'restore'])
+        ->name('archive.restore');
+    Route::delete('/archive/{module}/{id}', [ArchiveController::class, 'destroy'])
+        ->name('archive.destroy');
+    Route::get('/archived-records', [ArchiveController::class, 'index'])
+        ->name('archive.index');
 });
 
 require __DIR__.'/auth.php';

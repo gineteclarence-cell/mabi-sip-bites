@@ -61,6 +61,7 @@ class ProductController extends Controller
             'low_stock_threshold' => $product->low_stock_threshold,
             'cost_price' => (float) $product->cost_price,
             'selling_price' => (float) $product->selling_price,
+            'image_url' => $product->image_url,
             'status' => $product->status,
         ];
     }

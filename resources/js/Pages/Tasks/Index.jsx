@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Head } from '@inertiajs/react';
+import { Head, usePage } from '@inertiajs/react';
 import { Plus, ListTodo } from 'lucide-react';
 import AppLayout from '@/Components/Layout/AppLayout';
 import DataTable from '@/Components/UI/DataTable';
@@ -14,47 +14,38 @@ import Badge from '@/Components/UI/Badge';
 import RecordDetailModal from '@/Components/Records/RecordDetailModal';
 import { useArchivableRecords } from '@/lib/useArchivableRecords';
 import { buildActiveActions } from '@/lib/buildActionItems';
-import { sampleTasks, sampleBranches, sampleStaff } from '@/lib/sampleRecords';
 
 const priorityVariant = { high: 'danger', medium: 'warning', low: 'neutral' };
 const statusVariant = { pending: 'neutral', in_progress: 'warning', completed: 'success' };
 const statusLabel = { pending: 'Pending', in_progress: 'In progress', completed: 'Completed' };
 
-function emptyForm() {
+function emptyForm(defaultBranchId) {
   return {
-    title: '', description: '', branch_id: sampleBranches[0]?.id ?? '',
+    title: '', description: '', branch_id: defaultBranchId ?? '',
     assigned_to: '', priority: 'medium', status: 'pending', due_date: '',
   };
 }
 
-function TaskForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
-  const [form, setForm] = useState(initial || emptyForm());
+function TaskForm({ initial, onSubmit, onCancel, submitLabel, loading, branches, staffOptions }) {
+  const [form, setForm] = useState(initial || emptyForm(branches[0]?.id));
   const [errors, setErrors] = useState({});
 
-  const branchStaff = sampleStaff.filter((s) => String(s.branch_id) === String(form.branch_id));
-
-  function validate() {
-    const next = {};
-    if (!form.title.trim()) next.title = 'Title is required.';
-    if (!form.branch_id) next.branch_id = 'Branch is required.';
-    if (!form.assigned_to) next.assigned_to = 'Assigned staff is required.';
-    setErrors(next);
-    return Object.keys(next).length === 0;
-  }
+  const branchStaff = staffOptions.filter((s) => String(s.branch_id) === String(form.branch_id));
 
   function handleSubmit(e) {
     e.preventDefault();
-    if (!validate()) return;
-    const branch = sampleBranches.find((b) => String(b.id) === String(form.branch_id));
-    const assignee = sampleStaff.find((s) => String(s.id) === String(form.assigned_to));
-
-    onSubmit({
-      ...form,
-      branch_id: Number(form.branch_id),
-      branch_name: branch?.name?.replace('Mabi Sip and Bites ', '') || '',
-      assigned_to: Number(form.assigned_to),
-      assigned_to_name: assignee?.name || '',
-    });
+    onSubmit(
+      {
+        title: form.title,
+        description: form.description,
+        branch_id: form.branch_id,
+        assigned_to: form.assigned_to,
+        priority: form.priority,
+        status: form.status,
+        due_date: form.due_date,
+      },
+      { onError: setErrors }
+    );
   }
 
   return (
@@ -84,8 +75,8 @@ function TaskForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
         required
       >
         <option value="">Select branch</option>
-        {sampleBranches.map((b) => (
-          <option key={b.id} value={b.id}>{b.name}</option>
+        {branches.map((b) => (
+          <option key={b.id} value={b.id}>{b.name.replace('Mabi Sip and Bites ', '')}</option>
         ))}
       </Select>
 
@@ -130,6 +121,7 @@ function TaskForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
         type="date"
         value={form.due_date}
         onChange={(v) => setForm((f) => ({ ...f, due_date: v }))}
+        error={errors.due_date}
       />
 
       <div className="flex justify-end gap-3 pt-2">
@@ -140,7 +132,7 @@ function TaskForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
   );
 }
 
-function TasksPageContent() {
+function TasksPageContent({ tasks, branches, staffOptions }) {
   const {
     records, isSubmitting,
     creating, viewing, editing, archiving,
@@ -148,7 +140,12 @@ function TasksPageContent() {
     openView, closeView,
     openEdit, closeEdit, updateRecord,
     openArchive, closeArchive, confirmArchive,
-  } = useArchivableRecords(sampleTasks, { entityLabel: 'Task' });
+  } = useArchivableRecords({
+    records: tasks,
+    storeRoute: 'tasks.store',
+    updateRouteName: 'tasks.update',
+    module: 'tasks',
+  });
 
   const columns = [
     { key: 'title', header: 'Title' },
@@ -198,17 +195,19 @@ function TasksPageContent() {
       />
 
       <Modal isOpen={creating} onClose={closeCreate} title="Assign task" maxWidth="md">
-        <TaskForm onSubmit={createRecord} onCancel={closeCreate} submitLabel="Create task" loading={isSubmitting} />
+        <TaskForm onSubmit={createRecord} onCancel={closeCreate} submitLabel="Create task" loading={isSubmitting} branches={branches} staffOptions={staffOptions} />
       </Modal>
 
       <Modal isOpen={!!editing} onClose={closeEdit} title="Edit task" maxWidth="md">
         {editing && (
           <TaskForm
             initial={editing}
-            onSubmit={(data) => updateRecord(editing.id, data)}
+            onSubmit={(data, opts) => updateRecord(editing.id, data, opts)}
             onCancel={closeEdit}
             submitLabel="Save changes"
             loading={isSubmitting}
+            branches={branches}
+            staffOptions={staffOptions}
           />
         )}
       </Modal>
@@ -228,11 +227,14 @@ function TasksPageContent() {
   );
 }
 
-export default function TasksIndex() {
+export default function TasksIndex({ tasks, staffOptions = [] }) {
+  const { props } = usePage();
+  const branches = props.branches || [];
+
   return (
     <AppLayout title="Tasks" subtitle="Assign and track staff tasks">
       <Head title="Tasks" />
-      <TasksPageContent />
+      <TasksPageContent tasks={tasks} branches={branches} staffOptions={staffOptions} />
     </AppLayout>
   );
 }

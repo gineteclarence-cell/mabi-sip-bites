@@ -30,7 +30,41 @@ class SaleController extends Controller
 
         return Inertia::render('Sales/Index', [
             'sales' => $sales,
+            ...$this->buildOrderingOptions(),
         ]);
+    }
+
+    /**
+     * POS (Point of Sale) ordering screen — a separate, optional page
+     * from /sales for the same underlying action. Both pages submit to
+     * store() below; this action only needs to gather the same
+     * branch/staff/customer/product option lists, not the sales history
+     * itself, so it skips that heavier query.
+     */
+    public function pos(): Response
+    {
+        return Inertia::render('POS/Index', $this->buildOrderingOptions());
+    }
+
+    private function buildOrderingOptions(): array
+    {
+        $staffOptions = $this->scopeToUserBranch(
+            User::query()->where('status', 'active')->where('role', 'staff')
+        )->get(['id', 'name', 'branch_id']);
+
+        $customerOptions = $this->scopeToUserBranch(
+            Customer::query()->where('status', 'active')
+        )->get(['id', 'name', 'branch_id']);
+
+        $productOptions = $this->scopeToUserBranch(
+            Product::query()->where('status', 'active')
+        )->get(['id', 'name', 'category', 'branch_id', 'stock', 'selling_price', 'image_url']);
+
+        return [
+            'staffOptions' => $staffOptions,
+            'customerOptions' => $customerOptions,
+            'productOptions' => $productOptions,
+        ];
     }
 
     /**

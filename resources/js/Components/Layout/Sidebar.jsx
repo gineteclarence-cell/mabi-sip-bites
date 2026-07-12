@@ -2,6 +2,7 @@ import { usePage } from '@inertiajs/react';
 import {
   LayoutDashboard,
   Receipt,
+  ShoppingCart,
   Package,
   Users,
   CalendarCheck,
@@ -15,16 +16,29 @@ import {
 import NavItem from './NavItem';
 import { cn } from '@/lib/utils';
 
+/**
+ * `roles` mirrors routes/web.php's middleware('role:...') groups exactly:
+ *   - Branches: owner only
+ *   - Staff: owner + manager
+ *   - everything else: all three roles (branch-scoped server-side)
+ *
+ * This list hides links a role has no route access to, so the sidebar
+ * never shows something that would just 403 if clicked. It is NOT the
+ * security boundary itself — that's routes/web.php and the controllers.
+ * A Manager typing /branches directly still gets blocked server-side
+ * regardless of what this array says.
+ */
 const navItems = [
-  { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, routeName: 'dashboard' },
-  { key: 'sales', label: 'Sales', icon: Receipt, routeName: 'sales.index' },
-  { key: 'inventory', label: 'Inventory', icon: Package, routeName: 'inventory.index' },
-  { key: 'staff', label: 'Staff', icon: Users, routeName: 'staff.index' },
-  { key: 'attendance', label: 'Attendance', icon: CalendarCheck, routeName: 'attendance.index' },
-  { key: 'tasks', label: 'Tasks', icon: ListTodo, routeName: 'tasks.index' },
-  { key: 'branches', label: 'Branches', icon: Building2, routeName: 'branches.index' },
-  { key: 'reports', label: 'Reports', icon: BarChart3, routeName: 'reports.index' },
-  { key: 'archived', label: 'Archived Records', icon: Archive, routeName: 'archive.index' },
+  { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, routeName: 'dashboard', roles: ['owner', 'manager', 'staff'] },
+  { key: 'sales', label: 'Sales', icon: Receipt, routeName: 'sales.index', roles: ['owner', 'manager', 'staff'] },
+  { key: 'pos', label: 'Order', icon: ShoppingCart, routeName: 'pos.index', roles: ['owner', 'manager', 'staff'] },
+  { key: 'inventory', label: 'Inventory', icon: Package, routeName: 'inventory.index', roles: ['owner', 'manager', 'staff'] },
+  { key: 'staff', label: 'Staff', icon: Users, routeName: 'staff.index', roles: ['owner', 'manager'] },
+  { key: 'attendance', label: 'Attendance', icon: CalendarCheck, routeName: 'attendance.index', roles: ['owner', 'manager', 'staff'] },
+  { key: 'tasks', label: 'Tasks', icon: ListTodo, routeName: 'tasks.index', roles: ['owner', 'manager', 'staff'] },
+  { key: 'branches', label: 'Branches', icon: Building2, routeName: 'branches.index', roles: ['owner'] },
+  { key: 'reports', label: 'Reports', icon: BarChart3, routeName: 'reports.index', roles: ['owner', 'manager', 'staff'] },
+  { key: 'archived', label: 'Archived Records', icon: Archive, routeName: 'archive.index', roles: ['owner', 'manager', 'staff'] },
 ];
 
 /**
@@ -42,7 +56,10 @@ const navItems = [
  *   <Sidebar isOpen={mobileOpen} onClose={() => setMobileOpen(false)} onLogoutClick={openLogoutModal} />
  */
 export default function Sidebar({ isOpen, onClose, onLogoutClick }) {
-  const { url } = usePage();
+  const { url, props } = usePage();
+  const userRole = props.auth?.user?.role;
+
+  const visibleNavItems = navItems.filter((item) => item.roles.includes(userRole));
 
   function isActive(routeName) {
     try {
@@ -89,7 +106,7 @@ export default function Sidebar({ isOpen, onClose, onLogoutClick }) {
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
-        {navItems.map((item) => (
+        {visibleNavItems.map((item) => (
           <NavItem
             key={item.key}
             href={resolveHref(item.routeName)}

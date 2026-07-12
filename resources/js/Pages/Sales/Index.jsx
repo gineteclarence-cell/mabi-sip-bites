@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Head } from '@inertiajs/react';
+import { Head, router, usePage } from '@inertiajs/react';
 import { Plus, Receipt, Trash2, AlertCircle } from 'lucide-react';
 import AppLayout from '@/Components/Layout/AppLayout';
 import DataTable from '@/Components/UI/DataTable';
@@ -12,35 +12,26 @@ import Select from '@/Components/UI/Select';
 import Badge from '@/Components/UI/Badge';
 import RecordDetailModal from '@/Components/Records/RecordDetailModal';
 import { useArchivableRecords } from '@/lib/useArchivableRecords';
-import { sampleSales, sampleBranches, sampleCustomers, sampleStaff, sampleProducts } from '@/lib/sampleRecords';
 
 const paymentLabel = { cash: 'Cash', gcash: 'GCash', other: 'Other' };
 
 /**
- * SALE CREATION CONTRACT (matches App\Http\Requests\StoreSaleRequest):
- *   { branch_id, customer_id, staff_id, payment_method, items: [{ product_id, quantity }] }
- *
- * total_amount is never sent by the client — the server recalculates it
- * from current product prices and performs the stock deduction inside a
- * DB transaction with row locking. This form's "live total" is a preview
- * only; the authoritative total comes back from the server response.
- *
- * Editing an existing sale is intentionally not supported: once stock has
- * been deducted, changing line items would require recalculating deltas
- * across potentially-changed prices and re-validating stock, which is
- * real complexity outside what 07_BACKEND_CONTROLLERS_AND_ROUTES.md
- * describes ("Inventory Stock Behavior" only covers creation). The Sale
- * route group excludes `update` for this reason — so this page only
- * offers View and Archive in the action menu, not Edit.
+ * The server (SaleController::store) generates transaction_number,
+ * recalculates total_amount from current product prices, and performs
+ * the stock deduction inside a locked DB transaction. This form never
+ * sends a transaction number or a trusted total — sending the items
+ * array and letting the server be the source of truth for both is what
+ * was missing before (the old sample-data version of this page just
+ * never set transaction_number locally, which is why it showed blank).
  */
 
 function emptyLineItem() {
   return { lineId: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`, product_id: '', quantity: 1 };
 }
 
-function emptyForm() {
+function emptyForm(defaultBranchId) {
   return {
-    branch_id: sampleBranches[0]?.id ?? '',
+    branch_id: defaultBranchId ?? '',
     customer_id: '',
     staff_id: '',
     payment_method: 'cash',
@@ -48,15 +39,13 @@ function emptyForm() {
   };
 }
 
-function SaleForm({ onSubmit, onCancel, submitLabel, loading }) {
-  const [form, setForm] = useState(emptyForm());
+function SaleForm({ onSubmit, onCancel, submitLabel, loading, branches, staffOptions, customerOptions, productOptions }) {
+  const [form, setForm] = useState(emptyForm(branches[0]?.id));
   const [errors, setErrors] = useState({});
 
-  const branchStaff = sampleStaff.filter((s) => String(s.branch_id) === String(form.branch_id) && s.role === 'staff');
-  const branchCustomers = sampleCustomers.filter((c) => String(c.branch_id) === String(form.branch_id));
-  const branchProducts = sampleProducts.filter(
-    (p) => String(p.branch_id) === String(form.branch_id) && p.status === 'active'
-  );
+  const branchStaff = staffOptions.filter((s) => String(s.branch_id) === String(form.branch_id));
+  const branchCustomers = customerOptions.filter((c) => String(c.branch_id) === String(form.branch_id));
+  const branchProducts = productOptions.filter((p) => String(p.branch_id) === String(form.branch_id));
 
   function updateLine(lineId, patch) {
     setForm((f) => ({
@@ -87,49 +76,21 @@ function SaleForm({ onSubmit, onCancel, submitLabel, loading }) {
 
   const total = lineDetails.reduce((sum, l) => sum + l.subtotal, 0);
 
-  function validate() {
-    const next = {};
-    if (!form.branch_id) next.branch_id = 'Branch is required.';
-    if (!form.staff_id) next.staff_id = 'Staff is required.';
-
-    const validLines = lineDetails.filter((l) => l.product_id && l.quantity > 0);
-    if (validLines.length === 0) {
-      next.items = 'Add at least one product.';
-    } else if (lineDetails.some((l) => l.product_id && l.exceedsStock)) {
-      next.items = 'One or more items exceed available stock.';
-    }
-
-    setErrors(next);
-    return Object.keys(next).length === 0;
-  }
-
   function handleSubmit(e) {
     e.preventDefault();
-    if (!validate()) return;
 
-    const branch = sampleBranches.find((b) => String(b.id) === String(form.branch_id));
-    const staff = sampleStaff.find((s) => String(s.id) === String(form.staff_id));
-    const customer = sampleCustomers.find((c) => String(c.id) === String(form.customer_id));
     const validLines = lineDetails.filter((l) => l.product_id && l.quantity > 0);
 
-    // Shape sent to the server matches StoreSaleRequest exactly:
-    // { branch_id, customer_id, staff_id, payment_method, items }
-    // The fields below (branch_name, staff_name, etc.) are added only for
-    // the in-memory sample-state preview used before Phase 7's real
-    // Inertia props are wired into this page; the server response would
-    // supply these display fields itself.
-    onSubmit({
-      branch_id: Number(form.branch_id),
-      branch_name: branch?.name?.replace('Mabi Sip and Bites ', '') || '',
-      customer_id: form.customer_id ? Number(form.customer_id) : null,
-      customer_name: customer?.name || 'Walk-in',
-      staff_id: Number(form.staff_id),
-      staff_name: staff?.name || '',
-      payment_method: form.payment_method,
-      items: validLines.map((l) => ({ product_id: Number(l.product_id), quantity: l.quantity })),
-      total_amount: total,
-      sale_date: new Date().toISOString(),
-    });
+    onSubmit(
+      {
+        branch_id: form.branch_id,
+        customer_id: form.customer_id || null,
+        staff_id: form.staff_id,
+        payment_method: form.payment_method,
+        items: validLines.map((l) => ({ product_id: l.product_id, quantity: l.quantity })),
+      },
+      { onError: setErrors }
+    );
   }
 
   return (
@@ -143,8 +104,8 @@ function SaleForm({ onSubmit, onCancel, submitLabel, loading }) {
           required
         >
           <option value="">Select branch</option>
-          {sampleBranches.map((b) => (
-            <option key={b.id} value={b.id}>{b.name}</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>{b.name.replace('Mabi Sip and Bites ', '')}</option>
           ))}
         </Select>
 
@@ -190,11 +151,7 @@ function SaleForm({ onSubmit, onCancel, submitLabel, loading }) {
           <label className="text-sm font-medium text-text-primary">
             Items <span className="text-danger">*</span>
           </label>
-          <button
-            type="button"
-            onClick={addLine}
-            className="text-sm font-medium text-brand-ink hover:underline"
-          >
+          <button type="button" onClick={addLine} className="text-sm font-medium text-brand-ink hover:underline">
             + Add item
           </button>
         </div>
@@ -239,7 +196,7 @@ function SaleForm({ onSubmit, onCancel, submitLabel, loading }) {
         {lineDetails.some((l) => l.exceedsStock) && (
           <p className="mt-2 flex items-center gap-1.5 text-xs text-danger">
             <AlertCircle className="size-3.5" />
-            One or more items exceed available stock.
+            One or more items exceed available stock. The server will reject this if not corrected.
           </p>
         )}
 
@@ -252,10 +209,8 @@ function SaleForm({ onSubmit, onCancel, submitLabel, loading }) {
       </div>
 
       <div className="flex items-center justify-between rounded-dropdown border border-border bg-muted px-4 py-3">
-        <span className="text-sm font-medium text-text-secondary">Total</span>
-        <span className="text-lg font-semibold text-text-primary font-display">
-          ₱{total.toFixed(2)}
-        </span>
+        <span className="text-sm font-medium text-text-secondary">Estimated total</span>
+        <span className="text-lg font-semibold text-text-primary font-display">₱{total.toFixed(2)}</span>
       </div>
 
       <div className="flex justify-end gap-3 pt-2">
@@ -266,14 +221,19 @@ function SaleForm({ onSubmit, onCancel, submitLabel, loading }) {
   );
 }
 
-function SalesPageContent() {
+function SalesPageContent({ sales, branches, staffOptions, customerOptions, productOptions }) {
   const {
     records, isSubmitting,
     creating, viewing, archiving,
     openCreate, closeCreate, createRecord,
     openView, closeView,
     openArchive, closeArchive, confirmArchive,
-  } = useArchivableRecords(sampleSales, { entityLabel: 'Sale' });
+  } = useArchivableRecords({
+    records: sales,
+    storeRoute: 'sales.store',
+    updateRouteName: null, // sales have no update route — see note below
+    module: 'sales',
+  });
 
   const columns = [
     { key: 'transaction_number', header: 'Transaction' },
@@ -320,7 +280,16 @@ function SalesPageContent() {
       />
 
       <Modal isOpen={creating} onClose={closeCreate} title="Record sale" maxWidth="lg">
-        <SaleForm onSubmit={createRecord} onCancel={closeCreate} submitLabel="Save sale" loading={isSubmitting} />
+        <SaleForm
+          onSubmit={createRecord}
+          onCancel={closeCreate}
+          submitLabel="Save sale"
+          loading={isSubmitting}
+          branches={branches}
+          staffOptions={staffOptions}
+          customerOptions={customerOptions}
+          productOptions={productOptions}
+        />
       </Modal>
 
       <RecordDetailModal isOpen={!!viewing} onClose={closeView} title="Sale details" record={viewing} fields={viewFields} />
@@ -338,11 +307,20 @@ function SalesPageContent() {
   );
 }
 
-export default function SalesIndex() {
+export default function SalesIndex({ sales, staffOptions = [], customerOptions = [], productOptions = [] }) {
+  const { props } = usePage();
+  const branches = props.branches || [];
+
   return (
     <AppLayout title="Sales" subtitle="Transactions across both branches">
       <Head title="Sales" />
-      <SalesPageContent />
+      <SalesPageContent
+        sales={sales}
+        branches={branches}
+        staffOptions={staffOptions}
+        customerOptions={customerOptions}
+        productOptions={productOptions}
+      />
     </AppLayout>
   );
 }

@@ -12,7 +12,6 @@ import Badge from '@/Components/UI/Badge';
 import RecordDetailModal from '@/Components/Records/RecordDetailModal';
 import { useArchivableRecords } from '@/lib/useArchivableRecords';
 import { buildActiveActions } from '@/lib/buildActionItems';
-import { sampleBranches } from '@/lib/sampleRecords';
 
 const emptyForm = { name: '', location: '', contact_number: '' };
 
@@ -20,26 +19,18 @@ function BranchForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
   const [form, setForm] = useState(initial || emptyForm);
   const [errors, setErrors] = useState({});
 
-  function validate() {
-    const next = {};
-    if (!form.name.trim()) next.name = 'Branch name is required.';
-    if (form.contact_number && !/^09\d{9}$/.test(form.contact_number)) {
-      next.contact_number = 'Must be 11 digits starting with 09.';
-    }
-    setErrors(next);
-    return Object.keys(next).length === 0;
-  }
-
   function handleSubmit(e) {
     e.preventDefault();
-    if (validate()) onSubmit(form);
+    onSubmit(
+      { name: form.name, location: form.location, contact_number: form.contact_number },
+      { onError: setErrors }
+    );
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <Input
         label="Branch name"
-        inputModeType="text"
         value={form.name}
         onChange={(v) => setForm((f) => ({ ...f, name: v }))}
         error={errors.name}
@@ -50,6 +41,7 @@ function BranchForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
         label="Location"
         value={form.location}
         onChange={(v) => setForm((f) => ({ ...f, location: v }))}
+        error={errors.location}
         placeholder="City, Province"
       />
       <Input
@@ -69,19 +61,7 @@ function BranchForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
   );
 }
 
-/**
- * BranchesPageContent
- *
- * IMPORTANT: this inner component is what actually calls useArchivableRecords
- * (and therefore useToast internally). It is rendered as a CHILD of AppLayout
- * below, which means it mounts underneath AppLayout's <ToastProvider> in the
- * React tree. If useArchivableRecords were called directly inside the default
- * exported page component (as a sibling-in-time to <AppLayout>, not a
- * descendant of it), useToast() would throw because no ToastProvider
- * ancestor exists yet at that point in the tree. Every page in this phase
- * follows this same two-part split for that reason.
- */
-function BranchesPageContent() {
+function BranchesPageContent({ branches }) {
   const {
     records, isSubmitting,
     creating, viewing, editing, archiving,
@@ -89,7 +69,12 @@ function BranchesPageContent() {
     openView, closeView,
     openEdit, closeEdit, updateRecord,
     openArchive, closeArchive, confirmArchive,
-  } = useArchivableRecords(sampleBranches, { entityLabel: 'Branch' });
+  } = useArchivableRecords({
+    records: branches,
+    storeRoute: 'branches.store',
+    updateRouteName: 'branches.update',
+    module: 'branches',
+  });
 
   const columns = [
     { key: 'name', header: 'Branch' },
@@ -144,7 +129,7 @@ function BranchesPageContent() {
         {editing && (
           <BranchForm
             initial={editing}
-            onSubmit={(data) => updateRecord(editing.id, data)}
+            onSubmit={(data, opts) => updateRecord(editing.id, data, opts)}
             onCancel={closeEdit}
             submitLabel="Save changes"
             loading={isSubmitting}
@@ -167,11 +152,11 @@ function BranchesPageContent() {
   );
 }
 
-export default function BranchesIndex() {
+export default function BranchesIndex({ branches }) {
   return (
     <AppLayout title="Branches" subtitle="Manage Mabi Sip & Bites branch locations">
       <Head title="Branches" />
-      <BranchesPageContent />
+      <BranchesPageContent branches={branches} />
     </AppLayout>
   );
 }

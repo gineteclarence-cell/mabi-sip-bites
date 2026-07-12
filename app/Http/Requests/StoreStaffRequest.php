@@ -24,7 +24,7 @@ class StoreStaffRequest extends FormRequest
             'role' => ['required', Rule::in(['owner', 'manager', 'staff'])],
             'branch_id' => ['nullable', 'exists:branches,id', 'required_unless:role,owner'],
             // Password required on create, optional on update (leave blank to keep current).
-            'password' => [$staffId ? 'nullable' : 'required', Password::min(8)->letters()->numbers()->symbols()],
+            'password' => [$staffId ? 'nullable' : 'required', 'confirmed', Password::min(8)->letters()->numbers()->symbols()],
         ];
     }
 

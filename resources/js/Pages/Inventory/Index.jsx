@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Head } from '@inertiajs/react';
+import { Head, usePage } from '@inertiajs/react';
 import { Plus, Package } from 'lucide-react';
 import AppLayout from '@/Components/Layout/AppLayout';
 import DataTable from '@/Components/UI/DataTable';
@@ -13,42 +13,35 @@ import Badge from '@/Components/UI/Badge';
 import RecordDetailModal from '@/Components/Records/RecordDetailModal';
 import { useArchivableRecords } from '@/lib/useArchivableRecords';
 import { buildActiveActions } from '@/lib/buildActionItems';
-import { sampleProducts, sampleBranches } from '@/lib/sampleRecords';
 
-const emptyForm = {
-  name: '', category: '', branch_id: sampleBranches[0]?.id ?? '',
-  stock: '', low_stock_threshold: '10', cost_price: '', selling_price: '',
-};
+function emptyForm(defaultBranchId) {
+  return {
+    name: '', category: '', branch_id: defaultBranchId ?? '',
+    stock: '', low_stock_threshold: '10', cost_price: '', selling_price: '',
+  };
+}
 
-function ProductForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
-  const [form, setForm] = useState(initial || emptyForm);
+function ProductForm({ initial, onSubmit, onCancel, submitLabel, loading, branches }) {
+  const [form, setForm] = useState(initial || emptyForm(branches[0]?.id));
   const [errors, setErrors] = useState({});
-
-  function validate() {
-    const next = {};
-    if (!form.name.trim()) next.name = 'Product name is required.';
-    if (!form.category.trim()) next.category = 'Category is required.';
-    if (!form.branch_id) next.branch_id = 'Branch is required.';
-    if (form.stock === '' || Number(form.stock) < 0) next.stock = 'Stock must be 0 or more.';
-    if (form.low_stock_threshold === '' || Number(form.low_stock_threshold) < 0) next.low_stock_threshold = 'Required, 0 or more.';
-    if (form.selling_price === '' || Number(form.selling_price) < 0) next.selling_price = 'Selling price is required.';
-    setErrors(next);
-    return Object.keys(next).length === 0;
-  }
 
   function handleSubmit(e) {
     e.preventDefault();
-    if (!validate()) return;
-    const branch = sampleBranches.find((b) => String(b.id) === String(form.branch_id));
-    onSubmit({
-      ...form,
-      branch_id: Number(form.branch_id),
-      branch_name: branch?.name?.replace('Mabi Sip and Bites ', '') || '',
-      stock: Number(form.stock || 0),
-      low_stock_threshold: Number(form.low_stock_threshold || 10),
-      cost_price: Number(form.cost_price || 0),
-      selling_price: Number(form.selling_price || 0),
-    });
+    onSubmit(
+      {
+        name: form.name,
+        category: form.category,
+        branch_id: form.branch_id,
+        stock: form.stock,
+        low_stock_threshold: form.low_stock_threshold,
+        cost_price: form.cost_price,
+        selling_price: form.selling_price,
+        sku: form.sku,
+        unit: form.unit || 'pcs',
+        image_url: form.image_url,
+      },
+      { onError: setErrors }
+    );
   }
 
   return (
@@ -78,10 +71,18 @@ function ProductForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
         required
       >
         <option value="">Select branch</option>
-        {sampleBranches.map((b) => (
-          <option key={b.id} value={b.id}>{b.name}</option>
+        {branches.map((b) => (
+          <option key={b.id} value={b.id}>{b.name.replace('Mabi Sip and Bites ', '')}</option>
         ))}
       </Select>
+      <Input
+        label="Image URL"
+        value={form.image_url || ''}
+        onChange={(v) => setForm((f) => ({ ...f, image_url: v }))}
+        error={errors.image_url}
+        placeholder="https://example.com/milk-tea.jpg"
+        helpText="Optional — shown on the POS ordering screen"
+      />
       <div className="grid grid-cols-2 gap-4">
         <Input
           label="Stock"
@@ -108,6 +109,7 @@ function ProductForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
           inputModeType="money"
           value={form.cost_price}
           onChange={(v) => setForm((f) => ({ ...f, cost_price: v }))}
+          error={errors.cost_price}
           placeholder="0.00"
         />
         <Input
@@ -128,7 +130,7 @@ function ProductForm({ initial, onSubmit, onCancel, submitLabel, loading }) {
   );
 }
 
-function InventoryPageContent() {
+function InventoryPageContent({ products, branches }) {
   const {
     records, isSubmitting,
     creating, viewing, editing, archiving,
@@ -136,7 +138,12 @@ function InventoryPageContent() {
     openView, closeView,
     openEdit, closeEdit, updateRecord,
     openArchive, closeArchive, confirmArchive,
-  } = useArchivableRecords(sampleProducts, { entityLabel: 'Product' });
+  } = useArchivableRecords({
+    records: products,
+    storeRoute: 'inventory.store',
+    updateRouteName: 'inventory.update',
+    module: 'inventory',
+  });
 
   const columns = [
     { key: 'name', header: 'Product' },
@@ -200,17 +207,18 @@ function InventoryPageContent() {
       />
 
       <Modal isOpen={creating} onClose={closeCreate} title="Add product" maxWidth="md">
-        <ProductForm onSubmit={createRecord} onCancel={closeCreate} submitLabel="Create product" loading={isSubmitting} />
+        <ProductForm onSubmit={createRecord} onCancel={closeCreate} submitLabel="Create product" loading={isSubmitting} branches={branches} />
       </Modal>
 
       <Modal isOpen={!!editing} onClose={closeEdit} title="Edit product" maxWidth="md">
         {editing && (
           <ProductForm
             initial={editing}
-            onSubmit={(data) => updateRecord(editing.id, data)}
+            onSubmit={(data, opts) => updateRecord(editing.id, data, opts)}
             onCancel={closeEdit}
             submitLabel="Save changes"
             loading={isSubmitting}
+            branches={branches}
           />
         )}
       </Modal>
@@ -230,11 +238,14 @@ function InventoryPageContent() {
   );
 }
 
-export default function InventoryIndex() {
+export default function InventoryIndex({ products }) {
+  const { props } = usePage();
+  const branches = props.branches || [];
+
   return (
     <AppLayout title="Inventory" subtitle="Track stock levels across both branches">
       <Head title="Inventory" />
-      <InventoryPageContent />
+      <InventoryPageContent products={products} branches={branches} />
     </AppLayout>
   );
 }

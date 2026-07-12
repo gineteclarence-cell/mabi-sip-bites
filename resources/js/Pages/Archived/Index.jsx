@@ -1,76 +1,60 @@
 import { useState } from 'react';
-import { Head } from '@inertiajs/react';
+import { Head, router, usePage } from '@inertiajs/react';
 import { Archive } from 'lucide-react';
 import AppLayout from '@/Components/Layout/AppLayout';
 import DataTable from '@/Components/UI/DataTable';
 import ActionDropdown from '@/Components/UI/ActionDropdown';
 import ConfirmModal from '@/Components/UI/ConfirmModal';
 import Badge from '@/Components/UI/Badge';
-import { useToast } from '@/Components/UI/ToastProvider';
 import { buildArchivedActions } from '@/lib/buildActionItems';
 import { cn } from '@/lib/utils';
-import {
-  sampleBranches,
-  sampleProducts,
-  sampleStaff,
-  sampleSales,
-  sampleTasks,
-} from '@/lib/sampleRecords';
 
 /**
- * Archived Records
+ * Archived Records (real backend)
  *
- * Consolidates archived items across every entity that supports the
- * archive flow (Branches, Inventory, Staff, Sales, Tasks). Attendance is
- * intentionally excluded — per 02_DATABASE_DESIGN.md, attendance_logs has
- * no status/archived_at columns, so it has nothing to surface here.
+ * THIS IS THE FIX for "archive works but doesn't show on the archive
+ * page": the previous version called useArchivedTab(sampleX, ...) with
+ * a locally-imported sample array, completely independent from whatever
+ * state the Inventory/Staff/Sales/Tasks pages held in their own local
+ * useState(). Archiving a product on /inventory never touched this
+ * page's copy of the data, because there was no shared copy — each page
+ * was its own island.
  *
- * Each tab keeps its own independent in-memory record list (sample data
- * for now) so Restore/Delete on one tab can't affect another. In Phase 7,
- * each tab's data source becomes a real Inertia prop scoped to that
- * module, and Restore/Delete becomes a real PATCH/DELETE to the shared
- * ArchiveController routes from 07_BACKEND_CONTROLLERS_AND_ROUTES.md.
+ * Now: `archivedRecords` comes directly from
+ * ArchiveController::index(), which queries status = 'archived' for
+ * every module from the actual database. Restoring/deleting a record
+ * here calls the same archive.restore / archive.destroy routes that
+ * every other page's Archive button hits, and Inertia automatically
+ * re-fetches this page's props afterward — so there is now exactly one
+ * source of truth, not five.
  */
 
-const tabs = [
-  { key: 'branches', label: 'Branches' },
-  { key: 'inventory', label: 'Inventory' },
-  { key: 'staff', label: 'Staff' },
-  { key: 'sales', label: 'Sales' },
-  { key: 'tasks', label: 'Tasks' },
-];
-
-function useArchivedTab(initialData, entityLabel) {
-  const { showToast } = useToast();
-  const [allRecords, setAllRecords] = useState(initialData);
+function useArchivedTab(initialRecords, entityLabel, module) {
   const [restoring, setRestoring] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const archivedRecords = allRecords.filter((r) => r.status === 'archived');
-
   function confirmRestore() {
     if (!restoring) return;
     setIsSubmitting(true);
-    setAllRecords((current) =>
-      current.map((r) => (r.id === restoring.id ? { ...r, status: 'active', archived_at: null } : r))
-    );
-    setIsSubmitting(false);
-    setRestoring(null);
-    showToast({ type: 'success', title: 'Record restored successfully.' });
+    router.patch(route('archive.restore', { module, id: restoring.id }), {}, {
+      onSuccess: () => setRestoring(null),
+      onFinish: () => setIsSubmitting(false),
+    });
   }
 
   function confirmDelete() {
     if (!deleting) return;
     setIsSubmitting(true);
-    setAllRecords((current) => current.filter((r) => r.id !== deleting.id));
-    setIsSubmitting(false);
-    setDeleting(null);
-    showToast({ type: 'success', title: 'Record deleted successfully.' });
+    router.delete(route('archive.destroy', { module, id: deleting.id }), {
+      onSuccess: () => setDeleting(null),
+      onFinish: () => setIsSubmitting(false),
+    });
   }
 
   return {
-    archivedRecords, restoring, deleting, isSubmitting,
+    archivedRecords: initialRecords,
+    restoring, deleting, isSubmitting,
     setRestoring, setDeleting, confirmRestore, confirmDelete,
     entityLabel,
   };
@@ -123,14 +107,35 @@ function ArchivedTabPanel({ tab, columns }) {
   );
 }
 
-function ArchivedPageContent() {
-  const [activeTab, setActiveTab] = useState('branches');
+function ArchivedPageContent({ archivedRecords }) {
+  const { props } = usePage();
+  const currentRole = props.auth?.user?.role;
+  const isOwner = currentRole === 'owner';
 
-  const branchesTab = useArchivedTab(sampleBranches, 'Branch');
-  const inventoryTab = useArchivedTab(sampleProducts, 'Product');
-  const staffTab = useArchivedTab(sampleStaff, 'Staff');
-  const salesTab = useArchivedTab(sampleSales, 'Sale');
-  const tasksTab = useArchivedTab(sampleTasks, 'Task');
+  const branchesTab = useArchivedTab(archivedRecords.branches || [], 'Branch', 'branches');
+  const inventoryTab = useArchivedTab(archivedRecords.inventory || [], 'Product', 'inventory');
+  const staffTab = useArchivedTab(archivedRecords.staff || [], 'Staff', 'staff');
+  const salesTab = useArchivedTab(archivedRecords.sales || [], 'Sale', 'sales');
+  const tasksTab = useArchivedTab(archivedRecords.tasks || [], 'Task', 'tasks');
+
+  // Server already scopes the staff tab's contents in
+  // ArchiveController::index() — Manager only ever receives 'staff'-role
+  // archived records in the prop to begin with. This client-side filter
+  // is a redundant second layer, same reasoning as the live Staff page.
+  const visibleStaffArchived = isOwner
+    ? staffTab.archivedRecords
+    : staffTab.archivedRecords.filter((r) => r.role === 'staff');
+
+  const allTabs = [
+    { key: 'branches', label: 'Branches', ownerOnly: true },
+    { key: 'inventory', label: 'Inventory', ownerOnly: false },
+    { key: 'staff', label: 'Staff', ownerOnly: false },
+    { key: 'sales', label: 'Sales', ownerOnly: false },
+    { key: 'tasks', label: 'Tasks', ownerOnly: false },
+  ];
+
+  const visibleTabs = allTabs.filter((t) => !t.ownerOnly || isOwner);
+  const [activeTab, setActiveTab] = useState(visibleTabs[0]?.key ?? 'inventory');
 
   const tabData = {
     branches: {
@@ -151,7 +156,7 @@ function ArchivedPageContent() {
       ],
     },
     staff: {
-      tab: staffTab,
+      tab: { ...staffTab, archivedRecords: visibleStaffArchived },
       columns: [
         { key: 'name', header: 'Name' },
         { key: 'email', header: 'Email' },
@@ -177,22 +182,20 @@ function ArchivedPageContent() {
   };
 
   const activeTabCounts = Object.fromEntries(
-    Object.entries(tabData).map(([key, { tab }]) => [key, tab.archivedRecords.length])
+    visibleTabs.map((t) => [t.key, tabData[t.key].tab.archivedRecords.length])
   );
 
   return (
     <>
       <div className="mb-4 flex gap-1 overflow-x-auto rounded-dropdown border border-border bg-white p-1">
-        {tabs.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t.key}
             type="button"
             onClick={() => setActiveTab(t.key)}
             className={cn(
               'flex items-center gap-2 whitespace-nowrap rounded-dropdown px-3.5 py-2 text-sm font-medium transition-colors',
-              activeTab === t.key
-                ? 'bg-brand text-brand-ink'
-                : 'text-text-secondary hover:bg-muted'
+              activeTab === t.key ? 'bg-brand text-brand-ink' : 'text-text-secondary hover:bg-muted'
             )}
           >
             {t.label}
@@ -208,18 +211,20 @@ function ArchivedPageContent() {
         ))}
       </div>
 
-      {Object.entries(tabData).map(([key, { tab, columns }]) =>
-        activeTab === key ? <ArchivedTabPanel key={key} tab={tab} columns={columns} /> : null
+      {visibleTabs.map((t) =>
+        activeTab === t.key ? (
+          <ArchivedTabPanel key={t.key} tab={tabData[t.key].tab} columns={tabData[t.key].columns} />
+        ) : null
       )}
     </>
   );
 }
 
-export default function ArchivedIndex() {
+export default function ArchivedIndex({ archivedRecords }) {
   return (
     <AppLayout title="Archived Records" subtitle="Restore or permanently delete archived items">
       <Head title="Archived Records" />
-      <ArchivedPageContent />
+      <ArchivedPageContent archivedRecords={archivedRecords} />
     </AppLayout>
   );
 }
