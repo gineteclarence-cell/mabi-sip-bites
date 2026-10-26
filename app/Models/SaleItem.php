@@ -11,16 +11,14 @@ class SaleItem extends Model
     use HasFactory;
 
     protected $fillable = [
-        'sale_id',
-        'product_id',
-        'quantity',
-        'unit_price',
-        'subtotal',
+        'sale_id', 'product_id', 'quantity', 'size_oz', 'unit_price', 'subtotal',
     ];
 
     protected function casts(): array
     {
         return [
+            'quantity' => 'integer',
+            'size_oz' => 'integer',
             'unit_price' => 'decimal:2',
             'subtotal' => 'decimal:2',
         ];

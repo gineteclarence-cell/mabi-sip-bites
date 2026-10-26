@@ -134,7 +134,8 @@ function ArchivedPageContent({ archivedRecords }) {
     { key: 'tasks', label: 'Tasks', ownerOnly: false },
   ];
 
-  const visibleTabs = allTabs.filter((t) => !t.ownerOnly || isOwner);
+  const allowedKeys = isOwner ? ['branches', 'staff'] : ['inventory', 'tasks'];
+  const visibleTabs = allTabs.filter((t) => allowedKeys.includes(t.key));
   const [activeTab, setActiveTab] = useState(visibleTabs[0]?.key ?? 'inventory');
 
   const tabData = {

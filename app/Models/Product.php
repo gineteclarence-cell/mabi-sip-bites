@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Product extends Model
 {
@@ -13,6 +15,7 @@ class Product extends Model
 
     protected $fillable = [
         'branch_id',
+        'category_id',
         'name',
         'category',
         'sku',
@@ -21,16 +24,32 @@ class Product extends Model
         'low_stock_threshold',
         'cost_price',
         'selling_price',
+        'image_path',
         'status',
+    ];
+
+    protected $appends = [
+        'image_url',
     ];
 
     protected function casts(): array
     {
         return [
+            'stock' => 'integer',
+            'low_stock_threshold' => 'integer',
             'cost_price' => 'decimal:2',
             'selling_price' => 'decimal:2',
             'archived_at' => 'datetime',
         ];
+    }
+
+    public function getImageUrlAttribute(): ?string
+    {
+        if (! $this->image_path || ! Storage::disk('public')->exists($this->image_path)) {
+            return null;
+        }
+
+        return Storage::disk('public')->url($this->image_path);
     }
 
     public function branch(): BelongsTo
@@ -60,6 +79,25 @@ class Product extends Model
 
     public function scopeLowStock($query)
     {
-        return $query->whereColumn('stock', '<=', 'low_stock_threshold');
+        return $query->whereColumn(
+            'stock',
+            '<=',
+            'low_stock_threshold',
+        );
+    }
+
+    public function ingredients(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            Ingredient::class,
+            'product_ingredients'
+        )
+            ->withPivot([
+                'quantity_16',
+                'quantity_18',
+                'quantity_22',
+                'quantity_per_order',
+            ])
+            ->withTimestamps();
     }
 }

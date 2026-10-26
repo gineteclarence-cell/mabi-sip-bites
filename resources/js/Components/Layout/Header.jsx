@@ -29,7 +29,7 @@ export default function Header({
   const branchMenuRef = useRef(null);
 
   const isOwner = user?.role === 'owner';
-  const selectedBranch = branches.find((b) => b.id === selectedBranchId);
+  const selectedBranch = branches.find((b) => String(b.id) === String(selectedBranchId));
 
   useEffect(() => {
     if (!branchMenuOpen) return;
@@ -101,7 +101,7 @@ export default function Header({
                     }}
                     className={cn(
                       'block w-full px-3.5 py-2 text-left text-sm hover:bg-muted',
-                      selectedBranchId === branch.id ? 'text-brand-ink font-medium' : 'text-text-primary'
+                      String(selectedBranchId) === String(branch.id) ? 'text-brand-ink font-medium' : 'text-text-primary'
                     )}
                   >
                     {branch.name}

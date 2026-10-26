@@ -99,6 +99,8 @@ class DatabaseSeeder extends Seeder
             }
         }
 
+        $this->call(CategorySeeder::class);
+
         // --- Customers ----------------------------------------------------
         $customersByBranch = [
             $branch1->id => Customer::factory()->count(5)->create(['branch_id' => $branch1->id]),

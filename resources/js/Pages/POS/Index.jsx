@@ -1,354 +1,782 @@
-import { useState, useMemo } from 'react';
-import { Head, router, usePage } from '@inertiajs/react';
-import { Plus, Minus, Trash2, ShoppingCart, ImageOff, Search } from 'lucide-react';
-import AppLayout from '@/Components/Layout/AppLayout';
-import Button from '@/Components/UI/Button';
-import Select from '@/Components/UI/Select';
-import Input from '@/Components/UI/Input';
-import Badge from '@/Components/UI/Badge';
-import { cn } from '@/lib/utils';
+import { useMemo, useState } from "react";
 
-/**
- * POS (Point of Sale ordering screen)
- *
- * A separate, optional way to record a sale — /sales (the table-based
- * page) still exists exactly as before for anyone who prefers typing
- * values into a form. This page is the "on the spot" tap-to-order flow:
- * tap a product card, it lands in the cart on the right, adjust
- * quantity with steppers, pick a payment method, complete the sale.
- *
- * Both pages submit to the exact same route (sales.store) and therefore
- * the exact same SaleController::store() — server-side stock locking,
- * transaction-number generation, and total recalculation all apply
- * identically here. This page is just a different UI for building the
- * same { branch_id, staff_id, customer_id, payment_method, items }
- * payload.
- *
- * Branch/staff auto-fill: a Staff or Manager logged in here IS the
- * person ringing up the sale, so branch_id and staff_id are taken
- * directly from the authenticated user with no picker shown. Owner
- * doesn't ring up sales personally in the normal flow, so Owner gets an
- * explicit branch + staff picker before the product grid appears.
- */
-
-function CartLine({ line, onIncrement, onDecrement, onRemove }) {
-  return (
-    <div className="flex items-center gap-3 py-3">
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-text-primary">{line.product.name}</p>
-        <p className="text-xs text-text-secondary">₱{Number(line.product.selling_price).toFixed(2)} each</p>
-      </div>
-
-      <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={onDecrement}
-          className="flex size-8 items-center justify-center rounded-dropdown border border-border text-text-secondary hover:bg-muted"
-          aria-label="Decrease quantity"
-        >
-          <Minus className="size-3.5" />
-        </button>
-        <span className="w-8 text-center text-sm font-medium text-text-primary">{line.quantity}</span>
-        <button
-          type="button"
-          onClick={onIncrement}
-          disabled={line.quantity >= line.product.stock}
-          className="flex size-8 items-center justify-center rounded-dropdown border border-border text-text-secondary hover:bg-muted disabled:opacity-30 disabled:pointer-events-none"
-          aria-label="Increase quantity"
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </div>
-
-      <p className="w-20 shrink-0 text-right text-sm font-semibold text-text-primary">
-        ₱{(line.product.selling_price * line.quantity).toFixed(2)}
-      </p>
-
-      <button
-        type="button"
-        onClick={onRemove}
-        className="shrink-0 text-text-muted hover:text-danger"
-        aria-label="Remove from cart"
-      >
-        <Trash2 className="size-4" />
-      </button>
-    </div>
-  );
+function ProductPicture({ src, alt, className, placeholderClassName, iconClassName }) {
+    const [broken, setBroken] = useState(false);
+    if (!src || broken) {
+        return <div className={placeholderClassName}><ImageOff className={iconClassName} /></div>;
+    }
+    return <img src={src} alt={alt} className={className} onError={() => setBroken(true)} />;
 }
 
-function ProductCard({ product, onAdd }) {
-  const isOutOfStock = product.stock <= 0;
 
-  return (
-    <button
-      type="button"
-      onClick={() => !isOutOfStock && onAdd(product)}
-      disabled={isOutOfStock}
-      className={cn(
-        'group flex flex-col overflow-hidden rounded-card border border-border bg-white text-left transition-all',
-        isOutOfStock ? 'opacity-50 cursor-not-allowed' : 'hover:border-brand hover:shadow-md active:scale-[0.98]'
-      )}
-    >
-      <div className="flex aspect-square items-center justify-center bg-muted">
-        {product.image_url ? (
-          <img src={product.image_url} alt={product.name} className="size-full object-cover" />
-        ) : (
-          <ImageOff className="size-8 text-text-muted" />
-        )}
-      </div>
-      <div className="p-3">
-        <p className="truncate text-sm font-medium text-text-primary">{product.name}</p>
-        <div className="mt-1 flex items-center justify-between">
-          <span className="text-sm font-semibold text-brand-ink">₱{Number(product.selling_price).toFixed(2)}</span>
-          {isOutOfStock ? (
-            <Badge variant="danger">Out of stock</Badge>
-          ) : product.stock <= 10 ? (
-            <span className="text-xs text-warning">{product.stock} left</span>
-          ) : null}
-        </div>
-      </div>
-    </button>
-  );
+import { Head, router, usePage } from "@inertiajs/react";
+
+import {
+    AlertCircle,
+    Building2,
+    ImageOff,
+    Minus,
+    Plus,
+    Search,
+    ShoppingCart,
+    Trash2,
+} from "lucide-react";
+
+import AppLayout from "@/Components/Layout/AppLayout";
+import Button from "@/Components/UI/Button";
+import Input from "@/Components/UI/Input";
+import Select from "@/Components/UI/Select";
+
+const SIZES = [16, 18, 22];
+
+function normalizeCategory(value) {
+    return String(value || "")
+        .trim()
+        .toLowerCase();
 }
 
-function POSPageContent({ branches, staffOptions, customerOptions, productOptions }) {
-  const { props } = usePage();
-  const authUser = props.auth?.user;
-  const isOwner = authUser?.role === 'owner';
+function getAvailability(product, sizeOz = null) {
+    if (!product.inventory_configured) {
+        return {
+            available: false,
+            maximum: 0,
+            limiting_ingredient: null,
+            reason: "Inventory recipe not configured.",
+        };
+    }
 
-  const [selectedBranchId, setSelectedBranchId] = useState(isOwner ? '' : authUser?.branch_id);
-  const [selectedStaffId, setSelectedStaffId] = useState(isOwner ? '' : authUser?.id);
-  const [customerId, setCustomerId] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('cash');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [cart, setCart] = useState([]); // [{ product, quantity }]
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [errors, setErrors] = useState({});
+    if (product.is_milk_tea) {
+        return (
+            product.availability?.[String(sizeOz || 16)] ?? {
+                available: false,
+                maximum: 0,
+                limiting_ingredient: null,
+                reason: "Inventory unavailable.",
+            }
+        );
+    }
 
-  const branchProducts = productOptions.filter((p) => String(p.branch_id) === String(selectedBranchId));
-  const branchStaff = staffOptions.filter((s) => String(s.branch_id) === String(selectedBranchId));
-  const branchCustomers = customerOptions.filter((c) => String(c.branch_id) === String(selectedBranchId));
-
-  const categories = useMemo(
-    () => ['all', ...new Set(branchProducts.map((p) => p.category).filter(Boolean))],
-    [branchProducts]
-  );
-
-  const filteredProducts = branchProducts.filter((p) => {
-    const matchesCategory = categoryFilter === 'all' || p.category === categoryFilter;
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
-
-  function addToCart(product) {
-    setCart((current) => {
-      const existing = current.find((l) => l.product.id === product.id);
-      if (existing) {
-        if (existing.quantity >= product.stock) return current;
-        return current.map((l) => (l.product.id === product.id ? { ...l, quantity: l.quantity + 1 } : l));
-      }
-      return [...current, { product, quantity: 1 }];
-    });
-  }
-
-  function incrementLine(productId) {
-    setCart((current) =>
-      current.map((l) =>
-        l.product.id === productId && l.quantity < l.product.stock ? { ...l, quantity: l.quantity + 1 } : l
-      )
-    );
-  }
-
-  function decrementLine(productId) {
-    setCart((current) =>
-      current
-        .map((l) => (l.product.id === productId ? { ...l, quantity: l.quantity - 1 } : l))
-        .filter((l) => l.quantity > 0)
-    );
-  }
-
-  function removeLine(productId) {
-    setCart((current) => current.filter((l) => l.product.id !== productId));
-  }
-
-  const total = cart.reduce((sum, l) => sum + l.product.selling_price * l.quantity, 0);
-
-  function handleCompleteSale() {
-    if (cart.length === 0 || !selectedBranchId || !selectedStaffId) return;
-
-    setIsSubmitting(true);
-    setErrors({});
-
-    router.post(
-      route('sales.store'),
-      {
-        branch_id: selectedBranchId,
-        staff_id: selectedStaffId,
-        customer_id: customerId || null,
-        payment_method: paymentMethod,
-        items: cart.map((l) => ({ product_id: l.product.id, quantity: l.quantity })),
-      },
-      {
-        onSuccess: () => {
-          setCart([]);
-          setCustomerId('');
-          setPaymentMethod('cash');
-        },
-        onError: setErrors,
-        onFinish: () => setIsSubmitting(false),
-      }
-    );
-  }
-
-  // Owner must pick a branch + staff member before the grid is useful —
-  // showing every branch's products mixed together would be confusing
-  // and the stock numbers wouldn't mean anything without a branch
-  // context anyway.
-  if (isOwner && !selectedStaffId) {
     return (
-      <div className="mx-auto max-w-md rounded-card border border-border bg-white p-6">
-        <h2 className="text-base font-semibold text-text-primary">Start an order</h2>
-        <p className="mt-1 text-sm text-text-secondary">Select the branch and staff member ringing up this sale.</p>
-
-        <div className="mt-5 space-y-4">
-          <Select label="Branch" value={selectedBranchId} onChange={(v) => { setSelectedBranchId(v); setSelectedStaffId(''); }} required>
-            <option value="">Select branch</option>
-            {branches.map((b) => (
-              <option key={b.id} value={b.id}>{b.name.replace('Mabi Sip and Bites ', '')}</option>
-            ))}
-          </Select>
-
-          {selectedBranchId && (
-            <Select label="Staff" value={selectedStaffId} onChange={setSelectedStaffId} required>
-              <option value="">Select staff</option>
-              {staffOptions.filter((s) => String(s.branch_id) === String(selectedBranchId)).map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </Select>
-          )}
-        </div>
-      </div>
+        product.availability?.default ?? {
+            available: false,
+            maximum: 0,
+            limiting_ingredient: null,
+            reason: "Inventory unavailable.",
+        }
     );
-  }
-
-  return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_380px]">
-      {/* Product grid */}
-      <div>
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <Input
-            leftIcon={<Search className="size-4" />}
-            value={searchQuery}
-            onChange={setSearchQuery}
-            placeholder="Search products..."
-            className="sm:max-w-xs"
-          />
-          <div className="flex gap-1.5 overflow-x-auto">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => setCategoryFilter(cat)}
-                className={cn(
-                  'shrink-0 rounded-dropdown px-3.5 py-2 text-sm font-medium transition-colors',
-                  categoryFilter === cat ? 'bg-brand text-brand-ink' : 'bg-muted text-text-secondary hover:bg-border'
-                )}
-              >
-                {cat === 'all' ? 'All' : cat}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4">
-          {filteredProducts.map((product) => (
-            <ProductCard key={product.id} product={product} onAdd={addToCart} />
-          ))}
-        </div>
-
-        {filteredProducts.length === 0 && (
-          <p className="py-12 text-center text-sm text-text-secondary">No products match your search.</p>
-        )}
-      </div>
-
-      {/* Cart panel */}
-      <div className="lg:sticky lg:top-20 lg:self-start">
-        <div className="rounded-card border border-border bg-white p-4">
-          <div className="flex items-center gap-2 border-b border-border pb-3">
-            <ShoppingCart className="size-4 text-text-secondary" />
-            <h3 className="text-sm font-semibold text-text-primary">Current order</h3>
-            {cart.length > 0 && <Badge variant="brand">{cart.length}</Badge>}
-          </div>
-
-          {errors.items && (
-            <p className="mt-3 rounded-dropdown bg-danger-bg px-3 py-2 text-xs text-danger">{errors.items}</p>
-          )}
-
-          <div className="max-h-[40vh] divide-y divide-border overflow-y-auto">
-            {cart.length === 0 ? (
-              <p className="py-8 text-center text-sm text-text-secondary">Tap a product to add it here.</p>
-            ) : (
-              cart.map((line) => (
-                <CartLine
-                  key={line.product.id}
-                  line={line}
-                  onIncrement={() => incrementLine(line.product.id)}
-                  onDecrement={() => decrementLine(line.product.id)}
-                  onRemove={() => removeLine(line.product.id)}
-                />
-              ))
-            )}
-          </div>
-
-          <div className="mt-3 space-y-3 border-t border-border pt-3">
-            <Select label="Customer" value={customerId} onChange={setCustomerId} helpText="Leave blank for walk-in">
-              <option value="">Walk-in</option>
-              {branchCustomers.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </Select>
-
-            <Select label="Payment method" value={paymentMethod} onChange={setPaymentMethod} required>
-              <option value="cash">Cash</option>
-              <option value="gcash">GCash</option>
-              <option value="other">Other</option>
-            </Select>
-
-            <div className="flex items-center justify-between rounded-dropdown bg-muted px-3.5 py-3">
-              <span className="text-sm font-medium text-text-secondary">Total</span>
-              <span className="text-xl font-bold text-text-primary font-display">₱{total.toFixed(2)}</span>
-            </div>
-
-            <Button
-              variant="primary"
-              className="w-full"
-              loading={isSubmitting}
-              disabled={cart.length === 0}
-              onClick={handleCompleteSale}
-            >
-              Complete sale
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }
 
-export default function POSIndex({ staffOptions = [], customerOptions = [], productOptions = [] }) {
-  const { props } = usePage();
-  const branches = props.branches || [];
+export default function POSIndex({
+    selectedBranchId = null,
+    productOptions = [],
+    categoryOptions = [],
+}) {
+    console.log("CATEGORY OPTIONS:", categoryOptions);
+    console.log("PRODUCT OPTIONS:", productOptions);
 
-  return (
-    <AppLayout title="Order" subtitle="Tap to build an order, then complete the sale">
-      <Head title="Order" />
-      <POSPageContent
-        branches={branches}
-        staffOptions={staffOptions}
-        customerOptions={customerOptions}
-        productOptions={productOptions}
-      />
-    </AppLayout>
-  );
+    const { props } = usePage();
+
+    const user = props.auth?.user;
+
+    const owner = user?.role === "owner";
+
+    const [category, setCategory] = useState("all");
+
+    const [search, setSearch] = useState("");
+
+    const [cart, setCart] = useState([]);
+
+    const [submitting, setSubmitting] = useState(false);
+
+    const [errors, setErrors] = useState({});
+
+    /*
+    |--------------------------------------------------------------------------
+    | Categories
+    |--------------------------------------------------------------------------
+    */
+
+    const categories = useMemo(
+        () => [
+            "all",
+
+            ...new Set(
+                productOptions
+                    .map((product) => product.category)
+                    .filter(Boolean),
+            ),
+        ],
+        [productOptions],
+    );
+
+    const categoryImages = useMemo(
+        () =>
+            Object.fromEntries(
+                categoryOptions.map((item) => [
+                    normalizeCategory(item.name),
+                    item.image_url,
+                ]),
+            ),
+        [categoryOptions],
+    );
+
+    const visibleProducts = productOptions.filter((product) => {
+        const matchesCategory =
+            category === "all" || product.category === category;
+
+        const matchesSearch = product.name
+            .toLowerCase()
+            .includes(search.trim().toLowerCase());
+
+        return matchesCategory && matchesSearch;
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Shared ingredient usage already reserved in cart
+    |--------------------------------------------------------------------------
+    */
+
+    function getCartIngredientUsage(ingredientId, excludeKey = null) {
+        return cart
+            .filter((line) => line.key !== excludeKey)
+            .reduce((total, line) => {
+                const ingredient = line.product.ingredients?.find(
+                    (item) => item.id === ingredientId,
+                );
+
+                if (!ingredient) {
+                    return total;
+                }
+
+                let required = 0;
+
+                if (line.product.is_milk_tea) {
+                    required = Number(
+                        ingredient[`quantity_${line.size_oz}`] ?? 0,
+                    );
+                } else {
+                    required = Number(ingredient.quantity_per_order ?? 0);
+                }
+
+                return total + required * line.quantity;
+            }, 0);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Maximum quantity based on ALL required ingredients
+    |--------------------------------------------------------------------------
+    */
+
+    function getMaximumForLine(line) {
+        const ingredients = line.product.ingredients || [];
+
+        if (!ingredients.length) {
+            return 0;
+        }
+
+        let maximum = null;
+
+        for (const ingredient of ingredients) {
+            let perOrder = 0;
+
+            if (line.product.is_milk_tea) {
+                perOrder = Number(ingredient[`quantity_${line.size_oz}`] ?? 0);
+            } else {
+                perOrder = Number(ingredient.quantity_per_order ?? 0);
+            }
+
+            if (perOrder <= 0) {
+                continue;
+            }
+
+            const alreadyUsed = getCartIngredientUsage(ingredient.id, line.key);
+
+            const remaining = Math.max(
+                0,
+                Number(ingredient.stock ?? 0) - alreadyUsed,
+            );
+
+            const possible = Math.floor(remaining / perOrder);
+
+            if (maximum === null || possible < maximum) {
+                maximum = possible;
+            }
+        }
+
+        return maximum ?? 0;
+    }
+
+    function getLimitingIngredient(line) {
+        const ingredients = line.product.ingredients || [];
+
+        let minimum = null;
+
+        let limiting = null;
+
+        for (const ingredient of ingredients) {
+            let perOrder = 0;
+
+            if (line.product.is_milk_tea) {
+                perOrder = Number(ingredient[`quantity_${line.size_oz}`] ?? 0);
+            } else {
+                perOrder = Number(ingredient.quantity_per_order ?? 0);
+            }
+
+            if (perOrder <= 0) {
+                continue;
+            }
+
+            const alreadyUsed = getCartIngredientUsage(ingredient.id, line.key);
+
+            const remaining = Math.max(
+                0,
+                Number(ingredient.stock ?? 0) - alreadyUsed,
+            );
+
+            const possible = Math.floor(remaining / perOrder);
+
+            if (minimum === null || possible < minimum) {
+                minimum = possible;
+
+                limiting = ingredient.name;
+            }
+        }
+
+        return limiting;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Add product
+    |--------------------------------------------------------------------------
+    */
+
+    function add(product) {
+        if (!product.inventory_configured) {
+            return;
+        }
+
+        const sizeOz = product.is_milk_tea ? 16 : null;
+
+        const availability = getAvailability(product, sizeOz);
+
+        if (!availability.available || availability.maximum <= 0) {
+            return;
+        }
+
+        setCart((current) => {
+            const existing = current.find(
+                (line) =>
+                    line.product.id === product.id && line.size_oz === sizeOz,
+            );
+
+            if (existing) {
+                const maximum = getMaximumForLine(existing);
+
+                if (existing.quantity >= maximum) {
+                    return current;
+                }
+
+                return current.map((line) =>
+                    line.key === existing.key
+                        ? {
+                              ...line,
+
+                              quantity: line.quantity + 1,
+                          }
+                        : line,
+                );
+            }
+
+            return [
+                ...current,
+
+                {
+                    key: `${product.id}-${sizeOz}-${Date.now()}`,
+
+                    product,
+
+                    quantity: 1,
+
+                    size_oz: sizeOz,
+                },
+            ];
+        });
+    }
+
+    function updateLine(key, values) {
+        setCart((current) =>
+            current.map((line) =>
+                line.key === key
+                    ? {
+                          ...line,
+                          ...values,
+                      }
+                    : line,
+            ),
+        );
+    }
+
+    function removeLine(key) {
+        setCart((current) => current.filter((line) => line.key !== key));
+    }
+
+    function decrease(line) {
+        updateLine(line.key, {
+            quantity: Math.max(1, line.quantity - 1),
+        });
+    }
+
+    function increase(line) {
+        const maximum = getMaximumForLine(line);
+
+        if (line.quantity >= maximum) {
+            return;
+        }
+
+        updateLine(line.key, {
+            quantity: line.quantity + 1,
+        });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Size change
+    |--------------------------------------------------------------------------
+    */
+
+    function changeSize(line, value) {
+        const size = Number(value);
+
+        const temporary = {
+            ...line,
+            size_oz: size,
+        };
+
+        const ingredients = temporary.product.ingredients || [];
+
+        let maximum = null;
+
+        for (const ingredient of ingredients) {
+            const perOrder = Number(ingredient[`quantity_${size}`] ?? 0);
+
+            if (perOrder <= 0) {
+                continue;
+            }
+
+            const alreadyUsed = getCartIngredientUsage(ingredient.id, line.key);
+
+            const remaining = Math.max(
+                0,
+                Number(ingredient.stock ?? 0) - alreadyUsed,
+            );
+
+            const possible = Math.floor(remaining / perOrder);
+
+            if (maximum === null || possible < maximum) {
+                maximum = possible;
+            }
+        }
+
+        maximum ??= 0;
+
+        updateLine(line.key, {
+            size_oz: size,
+
+            quantity: maximum > 0 ? Math.min(line.quantity, maximum) : 1,
+        });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cart validation
+    |--------------------------------------------------------------------------
+    */
+
+    const cartHasStockProblem = cart.some(
+        (line) => getMaximumForLine(line) < line.quantity,
+    );
+
+    const total = cart.reduce(
+        (sum, line) => sum + Number(line.product.selling_price) * line.quantity,
+        0,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Complete order
+    |--------------------------------------------------------------------------
+    |
+    | Customer has been completely removed from POS.
+    |
+    */
+
+    function completeOrder() {
+        if (!selectedBranchId || !cart.length || cartHasStockProblem) {
+            return;
+        }
+
+        setSubmitting(true);
+
+        setErrors({});
+
+        router.post(
+            route("sales.store"),
+            {
+                branch_id: selectedBranchId,
+
+                payment_method: "cash",
+
+                items: cart.map((line) => ({
+                    product_id: line.product.id,
+
+                    quantity: line.quantity,
+
+                    size_oz: line.size_oz,
+                })),
+            },
+            {
+                preserveScroll: true,
+
+                onSuccess: () => {
+                    setCart([]);
+                },
+
+                onError: setErrors,
+
+                onFinish: () => setSubmitting(false),
+            },
+        );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Owner must select a branch
+    |--------------------------------------------------------------------------
+    */
+
+    if (owner && !selectedBranchId) {
+        return (
+            <AppLayout
+                title="Order"
+                subtitle="Select a branch to start an order"
+            >
+                <Head title="Order" />
+
+                <div className="flex min-h-[500px] items-center justify-center">
+                    <div className="max-w-md rounded-card border border-border bg-white px-8 py-10 text-center">
+                        <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-brand/20">
+                            <Building2 className="size-5" />
+                        </div>
+
+                        <h2 className="mt-4 text-lg font-semibold">
+                            Select a branch
+                        </h2>
+
+                        <p className="mt-2 text-sm text-text-secondary">
+                            Select Branch 1 or Branch 2 using the branch
+                            selector at the top-right.
+                        </p>
+                    </div>
+                </div>
+            </AppLayout>
+        );
+    }
+
+    return (
+        <AppLayout
+            title="Order"
+            subtitle="Tap to build an order, then complete the order"
+        >
+            <Head title="Order" />
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+                {/* PRODUCTS */}
+                <div className="min-w-0">
+                    <div className="mb-4 flex flex-col gap-3 sm:flex-row">
+                        <div className="w-full sm:max-w-sm">
+                            <Input
+                                leftIcon={<Search className="size-4" />}
+                                value={search}
+                                onChange={setSearch}
+                                placeholder="Search products..."
+                            />
+                        </div>
+
+                        <div className="w-full sm:w-48">
+                            <Select value={category} onChange={setCategory}>
+                                {categories.map((item) => (
+                                    <option key={item} value={item}>
+                                        {item === "all"
+                                            ? "All categories"
+                                            : item}
+                                    </option>
+                                ))}
+                            </Select>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+                        {visibleProducts.map((product) => {
+                            const displayedImage =
+                                product.image_url ||
+                                categoryImages[
+                                    normalizeCategory(product.name)
+                                ] ||
+                                categoryImages[
+                                    normalizeCategory(product.category)
+                                ];
+
+                            const availability = getAvailability(
+                                product,
+                                product.is_milk_tea ? 16 : null,
+                            );
+
+                            const notConfigured = !product.inventory_configured;
+
+                            const unavailable =
+                                notConfigured || !availability.available;
+
+                            return (
+                                <button
+                                    key={product.id}
+                                    type="button"
+                                    disabled={unavailable}
+                                    onClick={() => add(product)}
+                                    className="overflow-hidden rounded-card border border-border bg-white text-left transition hover:border-brand hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    <div className="flex aspect-square items-center justify-center bg-muted">
+                                        <ProductPicture
+                                            key={`${product.id}-${displayedImage || 'none'}`}
+                                            src={displayedImage}
+                                            alt={product.name}
+                                            className="size-full object-cover"
+                                            placeholderClassName="flex size-full items-center justify-center"
+                                            iconClassName="size-8 text-text-muted"
+                                        />
+                                    </div>
+
+                                    <div className="p-3">
+                                        <p className="truncate text-sm font-medium">
+                                            {product.name}
+                                        </p>
+
+                                        <p className="font-semibold">
+                                            ₱
+                                            {Number(
+                                                product.selling_price,
+                                            ).toFixed(2)}
+                                        </p>
+
+                                        {notConfigured ? (
+                                            <p className="mt-1 text-xs font-medium text-danger">
+                                                Inventory not configured
+                                            </p>
+                                        ) : !availability.available ? (
+                                            <p className="mt-1 text-xs font-medium text-danger">
+                                                Out of stock
+                                                {availability.limiting_ingredient
+                                                    ? ` • ${availability.limiting_ingredient}`
+                                                    : ""}
+                                            </p>
+                                        ) : (
+                                            <p className="mt-1 text-xs text-text-secondary">
+                                                {availability.maximum}{" "}
+                                                {product.is_milk_tea
+                                                    ? availability.maximum === 1
+                                                        ? "cup available"
+                                                        : "cups available"
+                                                    : availability.maximum === 1
+                                                      ? "order available"
+                                                      : "orders available"}
+                                            </p>
+                                        )}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* CURRENT ORDER */}
+                <aside className="rounded-card border border-border bg-white p-4">
+                    <h2 className="flex items-center gap-2 font-semibold">
+                        <ShoppingCart className="size-4" />
+                        Current order
+                    </h2>
+
+                    <div className="my-4 divide-y divide-border">
+                        {cart.length ? (
+                            cart.map((line) => {
+                                const maximum = getMaximumForLine(line);
+
+                                const limitingIngredient =
+                                    getLimitingIngredient(line);
+
+                                const reachedMaximum = line.quantity >= maximum;
+
+                                return (
+                                    <div
+                                        key={line.key}
+                                        className="space-y-3 py-4"
+                                    >
+                                        <div className="flex justify-between gap-3">
+                                            <div className="flex min-w-0 items-center gap-2">
+                                                <ProductPicture
+                                                    key={`${line.product.id}-${line.product.image_url || categoryImages[normalizeCategory(line.product.category)] || 'none'}`}
+                                                    src={line.product.image_url || categoryImages[normalizeCategory(line.product.category)]}
+                                                    alt={line.product.name}
+                                                    className="size-10 shrink-0 rounded-md object-cover"
+                                                    placeholderClassName="flex size-10 shrink-0 items-center justify-center rounded-md bg-muted"
+                                                    iconClassName="size-4 text-text-muted"
+                                                />
+                                                <span className="text-sm font-medium">{line.product.name}</span>
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    removeLine(line.key)
+                                                }
+                                                className="text-text-muted hover:text-danger"
+                                            >
+                                                <Trash2 className="size-4" />
+                                            </button>
+                                        </div>
+
+                                        {line.product.is_milk_tea && (
+                                            <Select
+                                                label="Size"
+                                                value={line.size_oz}
+                                                onChange={(value) =>
+                                                    changeSize(line, value)
+                                                }
+                                            >
+                                                {SIZES.map((size) => (
+                                                    <option
+                                                        key={size}
+                                                        value={size}
+                                                    >
+                                                        {size} oz
+                                                    </option>
+                                                ))}
+                                            </Select>
+                                        )}
+
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        decrease(line)
+                                                    }
+                                                    className="flex size-8 items-center justify-center rounded-dropdown border border-border hover:bg-muted"
+                                                >
+                                                    <Minus className="size-4" />
+                                                </button>
+
+                                                <span className="min-w-7 text-center text-sm font-semibold">
+                                                    {line.quantity}
+                                                </span>
+
+                                                <button
+                                                    type="button"
+                                                    disabled={reachedMaximum}
+                                                    onClick={() =>
+                                                        increase(line)
+                                                    }
+                                                    className="flex size-8 items-center justify-center rounded-dropdown border border-border hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+                                                >
+                                                    <Plus className="size-4" />
+                                                </button>
+                                            </div>
+
+                                            <strong>
+                                                ₱
+                                                {(
+                                                    Number(
+                                                        line.product
+                                                            .selling_price,
+                                                    ) * line.quantity
+                                                ).toFixed(2)}
+                                            </strong>
+                                        </div>
+
+                                        <div className="rounded-dropdown bg-muted p-3">
+                                            <p className="text-xs text-text-secondary">
+                                                Maximum available:{" "}
+                                                <strong className="text-text-primary">
+                                                    {maximum}{" "}
+                                                    {line.product.is_milk_tea
+                                                        ? maximum === 1
+                                                            ? "cup"
+                                                            : "cups"
+                                                        : maximum === 1
+                                                          ? "order"
+                                                          : "orders"}
+                                                </strong>
+                                            </p>
+
+                                            {limitingIngredient && (
+                                                <p className="mt-1 text-xs text-text-secondary">
+                                                    Limited by:{" "}
+                                                    <strong className="text-text-primary">
+                                                        {limitingIngredient}
+                                                    </strong>
+                                                </p>
+                                            )}
+
+                                            {reachedMaximum && (
+                                                <p className="mt-2 text-xs font-medium text-danger">
+                                                    Maximum available stock
+                                                    reached.
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        ) : (
+                            <p className="py-10 text-center text-sm text-text-secondary">
+                                Tap a product to add it here.
+                            </p>
+                        )}
+                    </div>
+
+                    {/* CUSTOMER DROPDOWN REMOVED */}
+
+                    <div className="mt-4 rounded-dropdown bg-muted p-3 text-sm">
+                        <span>Payment method</span>
+
+                        <strong className="float-right">Cash</strong>
+                    </div>
+
+                    {errors.items && (
+                        <div className="mt-3 flex gap-2 rounded-dropdown bg-red-50 p-3 text-xs text-danger">
+                            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+
+                            <span>{errors.items}</span>
+                        </div>
+                    )}
+
+                    <div className="my-4 flex justify-between rounded-dropdown bg-muted p-3">
+                        <span>Total</span>
+
+                        <strong>₱{total.toFixed(2)}</strong>
+                    </div>
+
+                    <Button
+                        className="w-full"
+                        onClick={completeOrder}
+                        loading={submitting}
+                        disabled={!cart.length || cartHasStockProblem}
+                    >
+                        Complete order
+                    </Button>
+                </aside>
+            </div>
+        </AppLayout>
+    );
 }

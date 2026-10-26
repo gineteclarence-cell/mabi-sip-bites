@@ -13,8 +13,8 @@ export default function LowStockTable({ products }) {
     <div className="rounded-card border border-border bg-white p-5">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-text-primary">Low stock alerts</h3>
-          <p className="mt-0.5 text-xs text-text-secondary">Items at or below threshold</p>
+          <h3 className="text-sm font-semibold text-text-primary">Inventory stock alerts</h3>
+          <p className="mt-0.5 text-xs text-text-secondary">Low stock (yellow) and out of stock (red)</p>
         </div>
         <Link href="/inventory" className="text-xs font-medium text-brand-ink hover:underline">
           View all
@@ -28,7 +28,7 @@ export default function LowStockTable({ products }) {
           {products.map((product) => (
             <div
               key={product.id}
-              className="flex items-center justify-between rounded-dropdown border border-border px-3.5 py-2.5"
+              className={`flex items-center justify-between rounded-dropdown border px-3.5 py-2.5 ${Number(product.stock) <= 0 ? "border-red-300 bg-red-50" : "border-yellow-300 bg-yellow-50"}`}
             >
               <div className="flex items-center gap-2.5">
                 <div className="flex size-8 items-center justify-center rounded-dropdown bg-warning-bg text-warning">
@@ -39,7 +39,9 @@ export default function LowStockTable({ products }) {
                   <p className="text-xs text-text-secondary">{product.branchName}</p>
                 </div>
               </div>
-              <Badge variant="warning">{product.stock} left</Badge>
+              <span className={`rounded px-2 py-1 text-xs font-semibold ${Number(product.stock) <= 0 ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-800'}`}>
+                {Number(product.stock) <= 0 ? 'Out of stock' : `Low stock: ${product.stock} left`}
+              </span>
             </div>
           ))}
         </div>

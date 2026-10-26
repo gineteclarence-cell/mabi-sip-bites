@@ -33,7 +33,10 @@ trait BranchScoped
         $user = Auth::user();
 
         if ($user->isOwner()) {
-            return $query;
+            // Owner's selected branch is persisted server-side by RememberOwnerBranch.
+            // A missing selection means the owner intentionally selected All branches.
+            $selected = request()->integer('branch_id');
+            return $selected ? $query->where($branchColumn, $selected) : $query;
         }
 
         return $query->where($branchColumn, $user->branch_id);

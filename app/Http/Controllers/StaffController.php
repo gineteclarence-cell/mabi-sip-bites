@@ -3,10 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreStaffRequest;
+use App\Models\Branch;
 use App\Models\Sale;
 use App\Models\User;
-use App\Traits\BranchScoped;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Inertia\Inertia;
@@ -15,135 +16,409 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class StaffController extends Controller
 {
-    use BranchScoped;
-
-    public function index(): Response
+    public function index(Request $request): Response
     {
-        $staff = $this->scopeToUserBranch(
-            User::query()->where('status', 'active')->with('branch')
-        )
+        $actingUser = $request->user();
+
+        $isOwner = $actingUser->isOwner();
+
+        $selectedBranchId = null;
+
+        /*
+        |--------------------------------------------------------------------------
+        | Base staff query
+        |--------------------------------------------------------------------------
+        */
+
+        $query = User::query()
+            ->where('status', 'active')
+            ->with('branch');
+
+        /*
+        |--------------------------------------------------------------------------
+        | Owner branch filtering
+        |--------------------------------------------------------------------------
+        |
+        | /staff
+        |      = all branches
+        |
+        | /staff?branch_id=1
+        |      = Branch 1
+        |
+        | /staff?branch_id=2
+        |      = Branch 2
+        |
+        */
+
+        if ($isOwner) {
+            $requestedBranchId =
+                $request->integer('branch_id');
+
+            if ($requestedBranchId) {
+                $branchExists = Branch::query()
+                    ->whereKey($requestedBranchId)
+                    ->where('status', 'active')
+                    ->exists();
+
+                if ($branchExists) {
+                    $selectedBranchId =
+                        $requestedBranchId;
+
+                    $query->where(
+                        'branch_id',
+                        $requestedBranchId
+                    );
+                }
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Manager scope
+        |--------------------------------------------------------------------------
+        |
+        | Manager can ONLY see staff from their own branch.
+        | They cannot use ?branch_id= to access another branch.
+        |
+        */
+
+        else {
+            $selectedBranchId =
+                $actingUser->branch_id;
+
+            $query
+                ->where(
+                    'branch_id',
+                    $actingUser->branch_id
+                )
+                ->where(
+                    'role',
+                    'staff'
+                );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Staff list
+        |--------------------------------------------------------------------------
+        */
+
+        $staff = $query
             ->orderBy('name')
             ->get();
 
+        /*
+        |--------------------------------------------------------------------------
+        | Monthly transaction counts
+        |--------------------------------------------------------------------------
+        */
+
         $transactionCounts = Sale::query()
-            ->whereIn('staff_id', $staff->pluck('id'))
-            ->where('status', 'completed')
-            ->where('sale_date', '>=', now()->startOfMonth())
-            ->selectRaw('staff_id, count(*) as total')
+            ->whereIn(
+                'staff_id',
+                $staff->pluck('id')
+            )
+            ->where(
+                'status',
+                'completed'
+            )
+            ->where(
+                'sale_date',
+                '>=',
+                now()->copy()->startOfMonth()
+            )
+            ->selectRaw(
+                'staff_id, count(*) as total'
+            )
             ->groupBy('staff_id')
-            ->pluck('total', 'staff_id');
+            ->pluck(
+                'total',
+                'staff_id'
+            );
 
-        $staff = $staff->map(fn (User $user) => $this->presentStaff($user, $transactionCounts->get($user->id, 0)));
+        $staff = $staff
+            ->map(
+                fn (User $user) =>
+                    $this->presentStaff(
+                        $user,
+                        (int) $transactionCounts->get(
+                            $user->id,
+                            0
+                        )
+                    )
+            )
+            ->values();
 
-        return Inertia::render('Staff/Index', [
-            'staff' => $staff,
-        ]);
+        return Inertia::render(
+            'Staff/Index',
+            [
+                'staff' =>
+                    $staff,
+
+                'selectedBranchId' =>
+                    $selectedBranchId,
+            ]
+        );
     }
 
-    public function store(StoreStaffRequest $request): RedirectResponse
-    {
-        $data = $request->validated();
+    public function store(
+        StoreStaffRequest $request
+    ): RedirectResponse {
+        $data =
+            $request->validated();
 
-        // Privilege-escalation guard: only an Owner may create another
-        // Owner account or a Manager account. Without this, a Manager
-        // (who now has route access to /staff per Phase 10) could submit
-        // role => 'owner' or role => 'manager' in the form and grant
-        // themselves or someone else elevated access. Manager is only
-        // permitted to create 'staff' role accounts.
-        $this->guardRoleAssignment($data['role']);
+        /*
+        |--------------------------------------------------------------------------
+        | Role protection
+        |--------------------------------------------------------------------------
+        */
 
-        if ($data['role'] !== 'owner') {
-            $this->authorizeBranch((int) $data['branch_id']);
+        $this->guardRoleAssignment(
+            $data['role']
+        );
+
+        if (
+            $data['role'] !==
+            'owner'
+        ) {
+            $this->authorizeBranch(
+                (int) $data['branch_id']
+            );
         } else {
-            $data['branch_id'] = null;
+            $data['branch_id'] =
+                null;
         }
 
-        $data['password'] = Hash::make($data['password']);
+        $data['password'] =
+            Hash::make(
+                $data['password']
+            );
 
-        User::create($data);
+        User::create(
+            $data
+        );
 
-        return redirect()->back()->with('success', 'Staff member created successfully.');
+        return back()->with(
+            'success',
+            'Staff member created successfully.'
+        );
     }
 
-    public function update(StoreStaffRequest $request, User $staff): RedirectResponse
-    {
-        // A Manager may only ever touch 'staff'-role records, and only
-        // within their own branch. authorizeRecordBranch() alone isn't
-        // enough here — Owner's branch_id is null, which happens to fail
-        // that check too, but relying on that coincidence is fragile and
-        // not self-documenting. This makes the rule explicit: Manager
-        // cannot edit Owner or other Manager accounts, full stop,
-        // regardless of branch_id.
-        $this->guardStaffRecordAccess($staff);
-        $this->authorizeRecordBranch($staff);
+    public function update(
+        StoreStaffRequest $request,
+        User $staff
+    ): RedirectResponse {
+        /*
+        |--------------------------------------------------------------------------
+        | Record access
+        |--------------------------------------------------------------------------
+        */
 
-        $data = $request->validated();
+        $this->guardStaffRecordAccess(
+            $staff
+        );
 
-        $this->guardRoleAssignment($data['role']);
+        $actingUser =
+            Auth::user();
 
-        if ($data['role'] !== 'owner') {
-            $this->authorizeBranch((int) $data['branch_id']);
-        } else {
-            $data['branch_id'] = null;
+        /*
+         * Manager may only edit records
+         * inside their branch.
+         */
+        if (
+            ! $actingUser->isOwner() &&
+            (int) $staff->branch_id !==
+                (int) $actingUser->branch_id
+        ) {
+            abort(403);
         }
 
-        if (empty($data['password'])) {
-            unset($data['password']);
+        $data =
+            $request->validated();
+
+        $this->guardRoleAssignment(
+            $data['role']
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Branch assignment
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $data['role'] !==
+            'owner'
+        ) {
+            $this->authorizeBranch(
+                (int) $data['branch_id']
+            );
         } else {
-            $data['password'] = Hash::make($data['password']);
+            $data['branch_id'] =
+                null;
         }
 
-        $staff->update($data);
+        /*
+        |--------------------------------------------------------------------------
+        | Password update
+        |--------------------------------------------------------------------------
+        |
+        | Existing passwords cannot be retrieved.
+        |
+        | Blank = keep current password
+        | Filled = replace with new password
+        |
+        */
 
-        return redirect()->back()->with('success', 'Staff member updated successfully.');
+        if (
+            empty(
+                $data['password']
+            )
+        ) {
+            unset(
+                $data['password']
+            );
+        } else {
+            $data['password'] =
+                Hash::make(
+                    $data['password']
+                );
+        }
+
+        $staff->update(
+            $data
+        );
+
+        return back()->with(
+            'success',
+            'Staff member updated successfully.'
+        );
     }
 
-    /**
-     * Manager may only assign the 'staff' role. Only Owner may create or
-     * promote someone to 'owner' or 'manager'.
-     */
-    private function guardRoleAssignment(string $targetRole): void
-    {
-        $actingUser = Auth::user();
+    private function guardRoleAssignment(
+        string $targetRole
+    ): void {
+        $actingUser =
+            Auth::user();
 
-        if ($actingUser->isOwner()) {
+        if (
+            $actingUser->isOwner()
+        ) {
             return;
         }
 
-        if ($targetRole !== 'staff') {
-            throw new HttpException(403, 'Only the owner can assign owner or manager roles.');
+        if (
+            $targetRole !==
+            'staff'
+        ) {
+            throw new HttpException(
+                403,
+                'Only the owner can assign owner or manager roles.'
+            );
         }
     }
 
-    /**
-     * Manager may only act on records that are themselves 'staff' role.
-     * Owner bypasses this entirely.
-     */
-    private function guardStaffRecordAccess(User $targetUser): void
-    {
-        $actingUser = Auth::user();
+    private function guardStaffRecordAccess(
+        User $targetUser
+    ): void {
+        $actingUser =
+            Auth::user();
 
-        if ($actingUser->isOwner()) {
+        if (
+            $actingUser->isOwner()
+        ) {
             return;
         }
 
-        if ($targetUser->role !== 'staff') {
-            throw new HttpException(403, 'You do not have access to manage this account.');
+        if (
+            $targetUser->role !==
+            'staff'
+        ) {
+            throw new HttpException(
+                403,
+                'You do not have access to manage this account.'
+            );
         }
     }
 
-    private function presentStaff(User $user, int $transactionsThisMonth = 0): array
-    {
+    private function authorizeBranch(
+        int $branchId
+    ): void {
+        $actingUser =
+            Auth::user();
+
+        /*
+         * Owner can assign any active branch.
+         */
+        if (
+            $actingUser->isOwner()
+        ) {
+            $exists =
+                Branch::query()
+                    ->whereKey(
+                        $branchId
+                    )
+                    ->where(
+                        'status',
+                        'active'
+                    )
+                    ->exists();
+
+            abort_unless(
+                $exists,
+                422
+            );
+
+            return;
+        }
+
+        /*
+         * Manager can only assign their own branch.
+         */
+        abort_unless(
+            (int) $actingUser->branch_id ===
+                $branchId,
+            403
+        );
+    }
+
+    private function presentStaff(
+        User $user,
+        int $transactionsThisMonth = 0
+    ): array {
         return [
-            'id' => $user->id,
-            'branch_id' => $user->branch_id,
-            'branch_name' => $user->branch?->name ? str_replace('Mabi Sip and Bites ', '', $user->branch->name) : '—',
-            'name' => $user->name,
-            'email' => $user->email,
-            'contact_number' => $user->contact_number,
-            'role' => $user->role,
-            'status' => $user->status,
-            'transactions_this_month' => $transactionsThisMonth,
+            'id' =>
+                $user->id,
+
+            'branch_id' =>
+                $user->branch_id,
+
+            'branch_name' =>
+                $user->branch?->name
+                    ? str_replace(
+                        'Mabi Sip and Bites ',
+                        '',
+                        $user->branch->name
+                    )
+                    : '—',
+
+            'name' =>
+                $user->name,
+
+            'email' =>
+                $user->email,
+
+            'contact_number' =>
+                $user->contact_number,
+
+            'role' =>
+                $user->role,
+
+            'status' =>
+                $user->status,
+
+            'transactions_this_month' =>
+                $transactionsThisMonth,
         ];
     }
 }

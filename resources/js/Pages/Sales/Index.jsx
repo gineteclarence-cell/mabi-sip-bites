@@ -1,326 +1,329 @@
-import { useState, useMemo } from 'react';
-import { Head, router, usePage } from '@inertiajs/react';
-import { Plus, Receipt, Trash2, AlertCircle } from 'lucide-react';
-import AppLayout from '@/Components/Layout/AppLayout';
-import DataTable from '@/Components/UI/DataTable';
-import ActionDropdown from '@/Components/UI/ActionDropdown';
-import Modal from '@/Components/UI/Modal';
-import ConfirmModal from '@/Components/UI/ConfirmModal';
-import Button from '@/Components/UI/Button';
-import Input from '@/Components/UI/Input';
-import Select from '@/Components/UI/Select';
-import Badge from '@/Components/UI/Badge';
-import RecordDetailModal from '@/Components/Records/RecordDetailModal';
-import { useArchivableRecords } from '@/lib/useArchivableRecords';
+import { useMemo, useState } from "react";
+import { Head, router, usePage } from "@inertiajs/react";
 
-const paymentLabel = { cash: 'Cash', gcash: 'GCash', other: 'Other' };
+import { Download, Eye, Receipt } from "lucide-react";
+
+import AppLayout from "@/Components/Layout/AppLayout";
+import ActionDropdown from "@/Components/UI/ActionDropdown";
+import Badge from "@/Components/UI/Badge";
+import Button from "@/Components/UI/Button";
+import DataTable from "@/Components/UI/DataTable";
+import Modal from "@/Components/UI/Modal";
+
+const paymentLabel = {
+    cash: "Cash",
+    gcash: "GCash",
+    other: "Other",
+};
+
+function formatCurrency(value) {
+    return `₱${Number(value ?? 0).toLocaleString("en-PH", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    })}`;
+}
+
+function formatDate(value) {
+    if (!value) {
+        return "—";
+    }
+
+    return new Date(value).toLocaleString("en-PH", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+    });
+}
 
 /**
- * The server (SaleController::store) generates transaction_number,
- * recalculates total_amount from current product prices, and performs
- * the stock deduction inside a locked DB transaction. This form never
- * sends a transaction number or a trusted total — sending the items
- * array and letting the server be the source of truth for both is what
- * was missing before (the old sample-data version of this page just
- * never set transaction_number locally, which is why it showed blank).
+ * Receipt modal
  */
+function ReceiptModal({ sale, isOpen, onClose }) {
+    if (!sale) {
+        return null;
+    }
 
-function emptyLineItem() {
-  return { lineId: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`, product_id: '', quantity: 1 };
-}
+    const downloadUrl = route("sales.receipt.pdf", sale.id);
 
-function emptyForm(defaultBranchId) {
-  return {
-    branch_id: defaultBranchId ?? '',
-    customer_id: '',
-    staff_id: '',
-    payment_method: 'cash',
-    items: [emptyLineItem()],
-  };
-}
-
-function SaleForm({ onSubmit, onCancel, submitLabel, loading, branches, staffOptions, customerOptions, productOptions }) {
-  const [form, setForm] = useState(emptyForm(branches[0]?.id));
-  const [errors, setErrors] = useState({});
-
-  const branchStaff = staffOptions.filter((s) => String(s.branch_id) === String(form.branch_id));
-  const branchCustomers = customerOptions.filter((c) => String(c.branch_id) === String(form.branch_id));
-  const branchProducts = productOptions.filter((p) => String(p.branch_id) === String(form.branch_id));
-
-  function updateLine(lineId, patch) {
-    setForm((f) => ({
-      ...f,
-      items: f.items.map((line) => (line.lineId === lineId ? { ...line, ...patch } : line)),
-    }));
-  }
-
-  function addLine() {
-    setForm((f) => ({ ...f, items: [...f.items, emptyLineItem()] }));
-  }
-
-  function removeLine(lineId) {
-    setForm((f) => ({ ...f, items: f.items.filter((line) => line.lineId !== lineId) }));
-  }
-
-  const lineDetails = useMemo(
-    () =>
-      form.items.map((line) => {
-        const product = branchProducts.find((p) => String(p.id) === String(line.product_id));
-        const quantity = Number(line.quantity) || 0;
-        const subtotal = product ? product.selling_price * quantity : 0;
-        const exceedsStock = product ? quantity > product.stock : false;
-        return { ...line, product, quantity, subtotal, exceedsStock };
-      }),
-    [form.items, branchProducts]
-  );
-
-  const total = lineDetails.reduce((sum, l) => sum + l.subtotal, 0);
-
-  function handleSubmit(e) {
-    e.preventDefault();
-
-    const validLines = lineDetails.filter((l) => l.product_id && l.quantity > 0);
-
-    onSubmit(
-      {
-        branch_id: form.branch_id,
-        customer_id: form.customer_id || null,
-        staff_id: form.staff_id,
-        payment_method: form.payment_method,
-        items: validLines.map((l) => ({ product_id: l.product_id, quantity: l.quantity })),
-      },
-      { onError: setErrors }
-    );
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
-        <Select
-          label="Branch"
-          value={form.branch_id}
-          onChange={(v) => setForm((f) => ({ ...f, branch_id: v, staff_id: '', customer_id: '', items: [emptyLineItem()] }))}
-          error={errors.branch_id}
-          required
+    return (
+        <Modal
+            isOpen={isOpen}
+            onClose={onClose}
+            title="Sales receipt"
+            maxWidth="md"
         >
-          <option value="">Select branch</option>
-          {branches.map((b) => (
-            <option key={b.id} value={b.id}>{b.name.replace('Mabi Sip and Bites ', '')}</option>
-          ))}
-        </Select>
+            <div className="space-y-5">
+                {/* Receipt */}
+                <div className="overflow-hidden rounded-2xl border border-border bg-white">
+                    {/* Header */}
+                    <div className="border-b border-dashed border-border px-6 py-6 text-center">
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#FFDE59] text-black">
+                            <Receipt className="size-6" />
+                        </div>
 
-        <Select
-          label="Staff"
-          value={form.staff_id}
-          onChange={(v) => setForm((f) => ({ ...f, staff_id: v }))}
-          error={errors.staff_id}
-          required
-        >
-          <option value="">Select staff</option>
-          {branchStaff.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </Select>
-      </div>
+                        <h2 className="mt-3 text-lg font-bold text-text-primary">
+                            Mabi Sip & Bites
+                        </h2>
 
-      <Select
-        label="Customer"
-        value={form.customer_id}
-        onChange={(v) => setForm((f) => ({ ...f, customer_id: v }))}
-        helpText="Leave blank for walk-in customer"
-      >
-        <option value="">Walk-in</option>
-        {branchCustomers.map((c) => (
-          <option key={c.id} value={c.id}>{c.name}</option>
-        ))}
-      </Select>
+                        <p className="mt-1 text-sm text-text-secondary">
+                            {sale.branch_name}
+                        </p>
 
-      <Select
-        label="Payment method"
-        value={form.payment_method}
-        onChange={(v) => setForm((f) => ({ ...f, payment_method: v }))}
-        required
-      >
-        <option value="cash">Cash</option>
-        <option value="gcash">GCash</option>
-        <option value="other">Other</option>
-      </Select>
+                        <p className="mt-1 text-xs text-text-secondary">
+                            Sales Receipt
+                        </p>
+                    </div>
 
-      <div>
-        <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-sm font-medium text-text-primary">
-            Items <span className="text-danger">*</span>
-          </label>
-          <button type="button" onClick={addLine} className="text-sm font-medium text-brand-ink hover:underline">
-            + Add item
-          </button>
-        </div>
+                    {/* Transaction information */}
+                    <div className="space-y-3 border-b border-dashed border-border px-6 py-5 text-sm">
+                        <div className="flex items-start justify-between gap-4">
+                            <span className="text-text-secondary">
+                                Transaction
+                            </span>
 
-        <div className="space-y-2.5">
-          {lineDetails.map((line) => (
-            <div key={line.lineId} className="flex items-start gap-2">
-              <Select
-                value={line.product_id}
-                onChange={(v) => updateLine(line.lineId, { product_id: v })}
-                className="flex-1"
-              >
-                <option value="">Select product</option>
-                {branchProducts.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} — ₱{Number(p.selling_price).toFixed(2)} ({p.stock} in stock)
-                  </option>
-                ))}
-              </Select>
+                            <span className="text-right font-medium text-text-primary">
+                                {sale.transaction_number}
+                            </span>
+                        </div>
 
-              <Input
-                inputModeType="numeric"
-                value={String(line.quantity)}
-                onChange={(v) => updateLine(line.lineId, { quantity: v === '' ? '' : Number(v) })}
-                className="w-20 text-center"
-                placeholder="Qty"
-              />
+                        <div className="flex items-start justify-between gap-4">
+                            <span className="text-text-secondary">Date</span>
 
-              <button
-                type="button"
-                onClick={() => removeLine(line.lineId)}
-                disabled={form.items.length === 1}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-input text-text-secondary hover:bg-muted hover:text-danger disabled:opacity-30 disabled:pointer-events-none"
-                aria-label="Remove item"
-              >
-                <Trash2 className="size-4" />
-              </button>
+                            <span className="text-right font-medium text-text-primary">
+                                {formatDate(sale.sale_date)}
+                            </span>
+                        </div>
+
+                        <div className="flex items-start justify-between gap-4">
+                            <span className="text-text-secondary">Staff</span>
+
+                            <span className="text-right font-medium text-text-primary">
+                                {sale.staff_name || "—"}
+                            </span>
+                        </div>
+
+                        <div className="flex items-start justify-between gap-4">
+                            <span className="text-text-secondary">Payment</span>
+
+                            <Badge variant="neutral">
+                                {paymentLabel[sale.payment_method] ||
+                                    sale.payment_method}
+                            </Badge>
+                        </div>
+                    </div>
+
+                    {/* Items */}
+                    <div className="px-6 py-5">
+                        <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                            Items
+                        </p>
+
+                        <div className="space-y-4">
+                            {sale.items?.length > 0 ? (
+                                sale.items.map((item) => (
+                                    <div
+                                        key={item.id}
+                                        className="flex items-start justify-between gap-4"
+                                    >
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium text-text-primary">
+                                                {item.product_name}
+
+                                                {item.size_oz
+                                                    ? ` (${item.size_oz} oz)`
+                                                    : ""}
+                                            </p>
+
+                                            <p className="mt-1 text-xs text-text-secondary">
+                                                {item.quantity} ×{" "}
+                                                {formatCurrency(
+                                                    item.unit_price,
+                                                )}
+                                            </p>
+                                        </div>
+
+                                        <p className="shrink-0 text-sm font-medium text-text-primary">
+                                            {formatCurrency(item.subtotal)}
+                                        </p>
+                                    </div>
+                                ))
+                            ) : (
+                                <p className="text-sm text-text-secondary">
+                                    No item information available.
+                                </p>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Total */}
+                    <div className="border-t border-dashed border-border bg-muted px-6 py-5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-base font-semibold text-text-primary">
+                                Total
+                            </span>
+
+                            <span className="text-xl font-bold text-text-primary">
+                                {formatCurrency(sale.total_amount)}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="px-6 py-4 text-center">
+                        <p className="text-xs text-text-secondary">
+                            Thank you for your purchase!
+                        </p>
+                    </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                    <Button type="button" variant="outline" onClick={onClose}>
+                        Close
+                    </Button>
+
+                    <a
+                        href={downloadUrl}
+                        className="inline-flex items-center justify-center gap-2 rounded-dropdown bg-[#FFDE59] px-4 py-2 text-sm font-semibold text-black transition hover:brightness-95"
+                    >
+                        <Download className="size-4" />
+                        Download PDF
+                    </a>
+                </div>
             </div>
-          ))}
-        </div>
-
-        {lineDetails.some((l) => l.exceedsStock) && (
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-danger">
-            <AlertCircle className="size-3.5" />
-            One or more items exceed available stock. The server will reject this if not corrected.
-          </p>
-        )}
-
-        {errors.items && (
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-danger">
-            <AlertCircle className="size-3.5" />
-            {errors.items}
-          </p>
-        )}
-      </div>
-
-      <div className="flex items-center justify-between rounded-dropdown border border-border bg-muted px-4 py-3">
-        <span className="text-sm font-medium text-text-secondary">Estimated total</span>
-        <span className="text-lg font-semibold text-text-primary font-display">₱{total.toFixed(2)}</span>
-      </div>
-
-      <div className="flex justify-end gap-3 pt-2">
-        <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" variant="primary" loading={loading}>{submitLabel}</Button>
-      </div>
-    </form>
-  );
+        </Modal>
+    );
 }
 
-function SalesPageContent({ sales, branches, staffOptions, customerOptions, productOptions }) {
-  const {
-    records, isSubmitting,
-    creating, viewing, archiving,
-    openCreate, closeCreate, createRecord,
-    openView, closeView,
-    openArchive, closeArchive, confirmArchive,
-  } = useArchivableRecords({
-    records: sales,
-    storeRoute: 'sales.store',
-    updateRouteName: null, // sales have no update route — see note below
-    module: 'sales',
-  });
+export default function SalesIndex({ sales = [], selectedBranchId = null }) {
+    const { props } = usePage();
 
-  const columns = [
-    { key: 'transaction_number', header: 'Transaction' },
-    { key: 'branch_name', header: 'Branch' },
-    { key: 'staff_name', header: 'Staff' },
-    { key: 'payment_method', header: 'Payment', render: (row) => <Badge variant="neutral">{paymentLabel[row.payment_method]}</Badge> },
-    { key: 'total_amount', header: 'Amount', render: (row) => `₱${Number(row.total_amount).toFixed(2)}` },
-  ];
+    const user = props.auth?.user;
+    const branches = props.branches || [];
 
-  const viewFields = [
-    { key: 'transaction_number', label: 'Transaction number' },
-    { key: 'branch_name', label: 'Branch' },
-    { key: 'staff_name', label: 'Staff' },
-    { key: 'customer_name', label: 'Customer' },
-    { key: 'payment_method', label: 'Payment method', render: (r) => paymentLabel[r.payment_method] },
-    { key: 'total_amount', label: 'Total amount', render: (r) => `₱${Number(r.total_amount).toFixed(2)}` },
-    { key: 'sale_date', label: 'Date', render: (r) => new Date(r.sale_date).toLocaleString() },
-  ];
+    const isOwner = user?.role === "owner";
 
-  return (
-    <>
-      <div className="mb-4 flex justify-end">
-        <Button variant="primary" leftIcon={<Plus className="size-4" />} onClick={openCreate}>
-          Record sale
-        </Button>
-      </div>
+    const [viewingReceipt, setViewingReceipt] = useState(null);
 
-      <DataTable
-        columns={columns}
-        data={records}
-        actions={(row) => (
-          <ActionDropdown
-            items={[
-              { key: 'view', label: 'View', onClick: () => openView(row) },
-              { key: 'archive', label: 'Archive', onClick: () => openArchive(row) },
-            ]}
-          />
-        )}
-        emptyIcon={Receipt}
-        emptyTitle="No sales recorded yet"
-        emptyDescription="Sales you record will appear here."
-        emptyActionLabel="Record sale"
-        onEmptyAction={openCreate}
-      />
+    /*
+    |--------------------------------------------------------------------------
+    | Client-side safety filter
+    |--------------------------------------------------------------------------
+    |
+    | The controller already filters the database query.
+    | This also keeps the rendered list aligned with the selected branch.
+    |
+    */
+    const records = useMemo(() => {
+        if (!isOwner || !selectedBranchId) {
+            return sales;
+        }
 
-      <Modal isOpen={creating} onClose={closeCreate} title="Record sale" maxWidth="lg">
-        <SaleForm
-          onSubmit={createRecord}
-          onCancel={closeCreate}
-          submitLabel="Save sale"
-          loading={isSubmitting}
-          branches={branches}
-          staffOptions={staffOptions}
-          customerOptions={customerOptions}
-          productOptions={productOptions}
-        />
-      </Modal>
+        return sales.filter(
+            (sale) => String(sale.branch_id) === String(selectedBranchId),
+        );
+    }, [sales, selectedBranchId, isOwner]);
 
-      <RecordDetailModal isOpen={!!viewing} onClose={closeView} title="Sale details" record={viewing} fields={viewFields} />
+    /*
+    |--------------------------------------------------------------------------
+    | Branch filter
+    |--------------------------------------------------------------------------
+    |
+    | If your global AppLayout branch selector is already navigating with
+    | ?branch_id=, this backend supports it immediately.
+    |
+    | This function is also available if you later move the selector here.
+    |
+    */
+    function changeBranch(branchId) {
+        router.get(
+            route("sales.index"),
+            branchId
+                ? {
+                      branch_id: branchId,
+                  }
+                : {},
+            {
+                preserveState: true,
+                preserveScroll: true,
+                replace: true,
+            },
+        );
+    }
 
-      <ConfirmModal
-        isOpen={!!archiving}
-        onClose={closeArchive}
-        onConfirm={confirmArchive}
-        intent="archive"
-        title="Archive this sale?"
-        description="You can restore it later from Archived Records."
-        loading={isSubmitting}
-      />
-    </>
-  );
-}
+    const columns = [
+        {
+            key: "transaction_number",
+            header: "Transaction",
+        },
 
-export default function SalesIndex({ sales, staffOptions = [], customerOptions = [], productOptions = [] }) {
-  const { props } = usePage();
-  const branches = props.branches || [];
+        {
+            key: "branch_name",
+            header: "Branch",
+        },
 
-  return (
-    <AppLayout title="Sales" subtitle="Transactions across both branches">
-      <Head title="Sales" />
-      <SalesPageContent
-        sales={sales}
-        branches={branches}
-        staffOptions={staffOptions}
-        customerOptions={customerOptions}
-        productOptions={productOptions}
-      />
-    </AppLayout>
-  );
+        {
+            key: "staff_name",
+            header: "Staff",
+        },
+
+        {
+            key: "payment_method",
+            header: "Payment",
+
+            render: (row) => (
+                <Badge variant="neutral">
+                    {paymentLabel[row.payment_method] || row.payment_method}
+                </Badge>
+            ),
+        },
+
+        {
+            key: "total_amount",
+            header: "Amount",
+
+            render: (row) => formatCurrency(row.total_amount),
+        },
+    ];
+
+    return (
+        <AppLayout
+            title="Sales"
+            subtitle="Completed sales and transaction details"
+        >
+            <Head title="Sales" />
+
+            <DataTable
+                columns={columns}
+                data={records}
+                actions={(row) => (
+                    <ActionDropdown
+                        items={[
+                            {
+                                key: "receipt",
+                                label: "View receipt",
+                                icon: Eye,
+
+                                onClick: () => setViewingReceipt(row),
+                            },
+                        ]}
+                    />
+                )}
+                emptyIcon={Receipt}
+                emptyTitle="No sales found"
+                emptyDescription={
+                    selectedBranchId
+                        ? "There are no completed sales for the selected branch."
+                        : "Completed sales will appear here."
+                }
+            />
+
+            <ReceiptModal
+                sale={viewingReceipt}
+                isOpen={!!viewingReceipt}
+                onClose={() => setViewingReceipt(null)}
+            />
+        </AppLayout>
+    );
 }
